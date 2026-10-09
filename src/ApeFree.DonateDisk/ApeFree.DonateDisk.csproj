@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <Title>ApeFree.DonateDisk</Title>
+    <Product>ApeFree.DonateDisk</Product>
+    <Version>0.0.1.0-alpha261009</Version>
+    <Authors>Guijie Lee</Authors>
+    <Company>ApeFree</Company>
+    <Copyright>Copyright © 2022-2026 ApeFree, All Rights Reserved.</Copyright>
+    <Description>远程主动捐赠式虚拟磁盘挂载核心库。支持 Slave 端将本地目录通过全双工 ApeRpc 主动分享，Master 端通过 Dokany 驱动自动挂载为 Windows 原生磁盘盘符。</Description>
+
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <RepositoryUrl>https://github.com/ApeFree/ApeFree.DonateDisk</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DokanNet" Version="2.3.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\ApeFree.ApeRpc\ApeFree.ApeRpc.BytesIO\ApeFree.ApeRpc.BytesIO.csproj" />
+    <ProjectReference Include="..\..\..\ApeFree.ApeRpc\ApeFree.ApeRpc\ApeFree.ApeRpc.csproj" />
+    <ProjectReference Include="..\..\..\STTech.BytesIO\STTech.BytesIO\STTech.BytesIO.csproj" />
+    <ProjectReference Include="..\..\..\ApeFree.Protocols\ApeFree.Protocols.Json\ApeFree.Protocols.Json.csproj" />
+  </ItemGroup>
+
+</Project>
