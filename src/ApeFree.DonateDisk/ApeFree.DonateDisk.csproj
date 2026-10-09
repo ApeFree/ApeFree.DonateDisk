@@ -14,11 +14,17 @@
     <Copyright>Copyright © 2022-2026 ApeFree, All Rights Reserved.</Copyright>
     <Description>远程主动捐赠式虚拟磁盘挂载核心库。支持 Slave 端将本地目录通过全双工 ApeRpc 主动分享，Master 端通过 Dokany 驱动自动挂载为 Windows 原生磁盘盘符。</Description>
 
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/ApeFree/ApeFree.DonateDisk</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="DokanNet" Version="2.3.0.3" />
