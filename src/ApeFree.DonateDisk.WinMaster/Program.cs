@@ -76,6 +76,16 @@ namespace ApeFree.DonateDisk.WinMaster
                 Console.WriteLine();
             };
 
+            masterNode.RemoteFileChanged += (s, e) =>
+            {
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                var detail = string.IsNullOrEmpty(e.Change.OldRelativePath)
+                    ? e.Change.RelativePath
+                    : $"{e.Change.OldRelativePath} -> {e.Change.RelativePath}";
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [远端变动] [{e.Session.MountPoint}] [{e.Change.ChangeType}] {detail}");
+                Console.ResetColor();
+            };
+
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在启动 TCP 服务端监听 ({options.ListenHost}:{options.ListenPort})...");
 
             try

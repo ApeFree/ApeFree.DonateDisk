@@ -60,6 +60,16 @@ namespace ApeFree.DonateDisk.WinSlave
                 Console.ResetColor();
             };
 
+            slaveNode.FileChanged += (s, e) =>
+            {
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                var detail = string.IsNullOrEmpty(e.OldRelativePath)
+                    ? e.RelativePath
+                    : $"{e.OldRelativePath} -> {e.RelativePath}";
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [本地变动] [{e.ChangeType}] {detail}");
+                Console.ResetColor();
+            };
+
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在连接 Master ({options.TargetHost}:{options.TargetPort})...");
 
             try
