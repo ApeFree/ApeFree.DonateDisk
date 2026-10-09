@@ -116,5 +116,68 @@ namespace ApeFree.DonateDisk.Tests
                 roService.CreateDirectory(@"\forbidden_dir");
             });
         }
+
+        [Fact]
+        public void OpenFile_WithWin32AccessMasks_OpensSuccessfully()
+        {
+            // Win32 GenericRead (0x80000000) & GenericWrite (0x40000000)
+            const int win32ReadWriteMask = unchecked((int)0xC0000000);
+            var result = _service.OpenFile(@"\win32_mask.txt", win32ReadWriteMask, (int)FileShare.ReadWrite, (int)FileMode.Create, 0, 0);
+            Assert.Equal(0, result.NtStatusCode);
+            Assert.True(result.HandleId > 0);
+
+            var written = _service.WriteBlock(result.HandleId, 0, new byte[] { 1, 2, 3 });
+            Assert.Equal(3, written);
+            _service.CloseFile(result.HandleId);
+
+            // Win32 ReadData / ReadAttributes (0x120089)
+            const int win32ReadMask = 0x120089;
+            var readOpen = _service.OpenFile(@"\win32_mask.txt", win32ReadMask, (int)FileShare.ReadWrite, (int)FileMode.Open, 0, 0);
+            Assert.Equal(0, readOpen.NtStatusCode);
+            var readData = _service.ReadBlock(readOpen.HandleId, 0, 3);
+            Assert.Equal(new byte[] { 1, 2, 3 }, readData);
+            _service.CloseFile(readOpen.HandleId);
+        }
+
+        [Fact]
+        public void WriteBlock_WithNegativeOffset_AppendsData()
+        {
+            var openResult = _service.OpenFile(@"\append_test.txt", (int)FileAccess.ReadWrite, (int)FileShare.ReadWrite, (int)FileMode.Create, 0, 0);
+            _service.WriteBlock(openResult.HandleId, 0, Encoding.UTF8.GetBytes("Part1"));
+            _service.WriteBlock(openResult.HandleId, -1, Encoding.UTF8.GetBytes("Part2"));
+            _service.CloseFile(openResult.HandleId);
+
+            var content = File.ReadAllText(Path.Combine(_tempDir, "append_test.txt"), Encoding.UTF8);
+            Assert.Equal("Part1Part2", content);
+        }
+
+        [Fact]
+        public void RootDirectory_Protection_ThrowsUnauthorizedAccess()
+        {
+            Assert.Throws<UnauthorizedAccessException>(() => _service.DeleteFile(@"\"));
+            Assert.Throws<UnauthorizedAccessException>(() => _service.DeleteDirectory(@"\"));
+            Assert.Throws<UnauthorizedAccessException>(() => _service.MoveFile(@"\", @"\renamed_root", replaceExisting: false));
+        }
+
+        [Fact]
+        public async Task FileSystemWatcher_DetectsFileCreationAndModification()
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _service.FileChanged += (s, e) =>
+            {
+                if (e.RelativePath.Contains("watcher_test"))
+                {
+                    tcs.TrySetResult(true);
+                }
+            };
+
+            // Create file physically on disk
+            File.WriteAllText(Path.Combine(_tempDir, "watcher_test.txt"), "hello watcher");
+
+            var delayTask = Task.Delay(5000);
+            var completedTask = await Task.WhenAny(tcs.Task, delayTask);
+
+            Assert.True(completedTask == tcs.Task, "FileSystemWatcher 应在 5 秒内监测到物理文件创建并触发 FileChanged 事件");
+        }
     }
 }
