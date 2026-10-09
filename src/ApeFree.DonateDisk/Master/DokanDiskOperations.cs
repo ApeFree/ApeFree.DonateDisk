@@ -25,10 +25,10 @@ namespace ApeFree.DonateDisk.Master
         public event EventHandler<FileChangeEventDto>? FileChanged;
 
         private const DokanNet.FileAccess DataWriteAccess =
-            DokanNet.FileAccess.WriteData | DokanNet.FileAccess.AppendData | DokanNet.FileAccess.Delete | DokanNet.FileAccess.GenericWrite;
+            DokanNet.FileAccess.WriteData | DokanNet.FileAccess.AppendData | DokanNet.FileAccess.Delete | DokanNet.FileAccess.GenericWrite | (DokanNet.FileAccess)0x10000000;
 
         private const DokanNet.FileAccess DataReadAccess =
-            DokanNet.FileAccess.ReadData | DokanNet.FileAccess.GenericRead | DokanNet.FileAccess.Execute | DokanNet.FileAccess.GenericExecute;
+            DokanNet.FileAccess.ReadData | DokanNet.FileAccess.GenericRead | DokanNet.FileAccess.Execute | DokanNet.FileAccess.GenericExecute | (DokanNet.FileAccess)0x10000000;
 
         /// <summary>
         /// 构造 DokanDiskOperations 桥接器
@@ -82,10 +82,21 @@ namespace ApeFree.DonateDisk.Master
 
         private static NtStatus ToNtStatus(int code) => (NtStatus)(uint)code;
 
-        private static System.IO.FileAccess ToSystemFileAccess(DokanNet.FileAccess access)
+        private static System.IO.FileAccess ToSystemFileAccess(DokanNet.FileAccess access, FileMode mode)
         {
-            bool write = (access & DataWriteAccess) != 0;
-            bool read = (access & DataReadAccess) != 0;
+            if (mode == FileMode.Append)
+            {
+                return System.IO.FileAccess.Write;
+            }
+
+            bool write = (access & DataWriteAccess) != 0 ||
+                         mode == FileMode.Create ||
+                         mode == FileMode.CreateNew ||
+                         mode == FileMode.Truncate;
+
+            bool read = (access & DataReadAccess) != 0 ||
+                        mode == FileMode.Open ||
+                        mode == FileMode.OpenOrCreate;
 
             if (write && read) return System.IO.FileAccess.ReadWrite;
             if (write) return System.IO.FileAccess.Write;
@@ -146,7 +157,7 @@ namespace ApeFree.DonateDisk.Master
                 return DokanResult.Success;
             }
 
-            var sysAccess = ToSystemFileAccess(access);
+            var sysAccess = ToSystemFileAccess(access, mode);
             var sysShare = share | FileShare.ReadWrite | FileShare.Delete;
 
             var existingItem = QueryItemInfo(fileName);
@@ -160,7 +171,7 @@ namespace ApeFree.DonateDisk.Master
                 switch (mode)
                 {
                     case FileMode.Open:
-                        if (!exists) return DokanResult.PathNotFound;
+                        if (!exists) return DokanResult.FileNotFound;
                         if (!isDir) return DokanResult.NotADirectory;
                         return DokanResult.Success;
 
@@ -237,6 +248,10 @@ namespace ApeFree.DonateDisk.Master
 
                     info.Context = openOrCreateResult.HandleId;
                     _cache.Invalidate(fileName);
+                    if (mode == FileMode.Truncate)
+                    {
+                        return DokanResult.Success;
+                    }
                     return exists ? DokanResult.AlreadyExists : DokanResult.Success;
 
                 default:
@@ -506,6 +521,10 @@ namespace ApeFree.DonateDisk.Master
                 _cache.Invalidate(oldName);
                 _cache.Invalidate(newName);
                 return DokanResult.Success;
+            }
+            catch (FileNotFoundException)
+            {
+                return DokanResult.FileNotFound;
             }
             catch (UnauthorizedAccessException)
             {

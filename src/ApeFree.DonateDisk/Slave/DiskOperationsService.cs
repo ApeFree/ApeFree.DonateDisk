@@ -260,7 +260,14 @@ namespace ApeFree.DonateDisk.Slave
             }
 
             var fileMode = (FileMode)mode;
-            var fileOptions = (FileOptions)options;
+            const FileOptions validOptionsMask =
+                FileOptions.Asynchronous |
+                FileOptions.DeleteOnClose |
+                FileOptions.Encrypted |
+                FileOptions.RandomAccess |
+                FileOptions.SequentialScan |
+                FileOptions.WriteThrough;
+            var fileOptions = (FileOptions)(options & (int)validOptionsMask);
 
             // 转换文件访问权限（安全规约掩码，支持标准与 Win32 访问掩码）
             FileAccess fileAccess = FileAccess.Read;
@@ -274,14 +281,27 @@ namespace ApeFree.DonateDisk.Slave
             }
             else
             {
-                // 包含写入掩码 (GenericWrite 0x40000000, WriteData 2, AppendData 4, Delete 0x10000)
-                bool hasWrite = (access & 0x40000000) != 0 || (access & 2) != 0 || (access & 4) != 0;
-                // 包含读取掩码 (GenericRead 0x80000000, ReadData 1, Execute 0x20)
-                bool hasRead = (access & unchecked((int)0x80000000)) != 0 || (access & 1) != 0 || (access & 0x20) != 0;
+                // 包含写入掩码 (GenericWrite 0x40000000, WriteData 2, AppendData 4, Delete 0x10000, GenericAll 0x10000000)
+                bool hasWrite = (access & 0x40000000) != 0 || (access & 2) != 0 || (access & 4) != 0 || (access & 0x10000000) != 0;
+                // 包含读取掩码 (GenericRead 0x80000000, ReadData 1, Execute 0x20, GenericAll 0x10000000)
+                bool hasRead = (access & unchecked((int)0x80000000)) != 0 || (access & 1) != 0 || (access & 0x20) != 0 || (access & 0x10000000) != 0;
 
                 if (hasWrite && hasRead) fileAccess = FileAccess.ReadWrite;
                 else if (hasWrite) fileAccess = FileAccess.Write;
                 else fileAccess = FileAccess.Read;
+            }
+
+            // 对于创建/截断/追加等模式，规范化与 .NET FileStream 兼容的访问模式
+            if (fileMode == FileMode.Create || fileMode == FileMode.CreateNew || fileMode == FileMode.Truncate)
+            {
+                if (fileAccess == FileAccess.Read)
+                {
+                    fileAccess = FileAccess.ReadWrite;
+                }
+            }
+            else if (fileMode == FileMode.Append)
+            {
+                fileAccess = FileAccess.Write;
             }
 
             // 默认赋予共享读写及删除权限，避免 Windows 资源管理器多线程同时预览冲突
@@ -520,25 +540,56 @@ namespace ApeFree.DonateDisk.Slave
             {
                 if (File.Exists(newFull))
                 {
-                    if (replaceExisting)
-                    {
-                        File.Delete(newFull);
-                    }
-                    else
+                    if (!replaceExisting)
                     {
                         throw new IOException("目标文件已存在。");
                     }
+                    CloseSessionsForPath(newFull);
                 }
-                File.Move(oldFull, newFull);
+
+                CloseSessionsForPath(oldFull);
+                File.Move(oldFull, newFull, overwrite: replaceExisting);
             }
             else if (Directory.Exists(oldFull))
             {
+                if (Directory.Exists(newFull))
+                {
+                    if (!replaceExisting)
+                    {
+                        throw new IOException("目标目录已存在。");
+                    }
+                    Directory.Delete(newFull, recursive: true);
+                }
                 Directory.Move(oldFull, newFull);
             }
             else
             {
                 throw new FileNotFoundException("源文件或目录不存在。");
             }
+        }
+
+        private void CloseSessionsForPath(string path)
+        {
+            try
+            {
+                var full = _pathResolver.ResolveFullPath(path);
+                foreach (var kv in _sessions)
+                {
+                    try
+                    {
+                        var sessionFull = _pathResolver.ResolveFullPath(kv.Value.RelativePath);
+                        if (string.Equals(sessionFull, full, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (_sessions.TryRemove(kv.Key, out var s))
+                            {
+                                s.Dispose();
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         /// <inheritdoc/>

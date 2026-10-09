@@ -51,7 +51,7 @@ namespace ApeFree.DonateDisk.Common
             }
 
             var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar)
-                                         .TrimStart(Path.DirectorySeparatorChar);
+                                         .Trim(Path.DirectorySeparatorChar);
 
             if (string.IsNullOrEmpty(normalized))
             {
@@ -77,16 +77,18 @@ namespace ApeFree.DonateDisk.Common
         /// <returns>以反斜杠开头的规范相对路径</returns>
         public string GetRelativePath(string fullPath)
         {
-            var normalizedFull = Path.GetFullPath(fullPath);
+            var normalizedFull = Path.GetFullPath(fullPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var trimmedRoot = _rootDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (string.Equals(normalizedFull, trimmedRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return Path.DirectorySeparatorChar.ToString();
+            }
+
             if (normalizedFull.StartsWith(_rootDirectory, StringComparison.OrdinalIgnoreCase))
             {
                 var rel = normalizedFull.Substring(_rootDirectory.Length);
                 return Path.DirectorySeparatorChar + rel;
-            }
-
-            if (string.Equals(normalizedFull, _rootDirectory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
-            {
-                return Path.DirectorySeparatorChar.ToString();
             }
 
             throw new ArgumentException($"路径 '{fullPath}' 不位于共享根目录下。", nameof(fullPath));

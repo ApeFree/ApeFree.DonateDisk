@@ -300,5 +300,83 @@ namespace ApeFree.DonateDisk.Tests
             // Cache entry should be invalidated
             Assert.False(_cache.TryGet(@"\cached_file.txt", out _));
         }
+
+        [Fact]
+        public void CreateFile_DirectoryModeOpen_WhenMissing_ReturnsFileNotFoundNotPathNotFound()
+        {
+            var info = new MockDokanFileInfo { IsDirectory = true };
+            var status = _ops.CreateFile(@"\NonExistentFolder", DokanNet.FileAccess.ReadData, FileShare.ReadWrite, FileMode.Open, 0, 0, info);
+            Assert.Equal(DokanResult.FileNotFound, status);
+        }
+
+        [Fact]
+        public void MoveFile_DirectoryRename_Succeeds()
+        {
+            var oldPhysical = Path.Combine(_tempDir, "FolderA");
+            var newPhysical = Path.Combine(_tempDir, "FolderB");
+            Directory.CreateDirectory(oldPhysical);
+            File.WriteAllText(Path.Combine(oldPhysical, "file.txt"), "hello world");
+
+            var info = new MockDokanFileInfo { IsDirectory = true };
+            var status = _ops.MoveFile(@"\FolderA", @"\FolderB", replace: false, info);
+            Assert.Equal(DokanResult.Success, status);
+            Assert.False(Directory.Exists(oldPhysical));
+            Assert.True(Directory.Exists(newPhysical));
+            Assert.True(File.Exists(Path.Combine(newPhysical, "file.txt")));
+        }
+
+        [Fact]
+        public void CreateFile_NotepadSaveSimulation_GenericAllAndCreate_Succeeds()
+        {
+            var physical = Path.Combine(_tempDir, "note.txt");
+            File.WriteAllText(physical, "old content");
+
+            // 记事本保存常传入 GenericAll (0x10000000) 与 FileMode.Create / Truncate
+            var info = new MockDokanFileInfo();
+            var status = _ops.CreateFile(@"\note.txt", (DokanNet.FileAccess)0x10000000, FileShare.ReadWrite, FileMode.Create, 0, 0, info);
+            Assert.Equal(DokanResult.AlreadyExists, status);
+            Assert.NotNull(info.Context);
+
+            // 写入新内容并刷新
+            var newBytes = Encoding.UTF8.GetBytes("updated content by notepad");
+            var writeStatus = _ops.WriteFile(@"\note.txt", newBytes, out int written, 0, info);
+            Assert.Equal(DokanResult.Success, writeStatus);
+            Assert.Equal(newBytes.Length, written);
+
+            _ops.CloseFile(@"\note.txt", info);
+
+            var readText = File.ReadAllText(physical);
+            Assert.Equal("updated content by notepad", readText);
+        }
+
+        [Fact]
+        public void MoveFile_NotepadAtomicSave_ReplaceExisting_Succeeds()
+        {
+            var targetPhysical = Path.Combine(_tempDir, "document.txt");
+            var tempPhysical = Path.Combine(_tempDir, "document.txt.tmp");
+            File.WriteAllText(targetPhysical, "version 1");
+            File.WriteAllText(tempPhysical, "version 2 (atomic save)");
+
+            var info = new MockDokanFileInfo();
+            var status = _ops.MoveFile(@"\document.txt.tmp", @"\document.txt", replace: true, info);
+            Assert.Equal(DokanResult.Success, status);
+            Assert.False(File.Exists(tempPhysical));
+            Assert.True(File.Exists(targetPhysical));
+            Assert.Equal("version 2 (atomic save)", File.ReadAllText(targetPhysical));
+        }
+
+        [Fact]
+        public void CreateFile_WithWin32BackupSemantics_DoesNotThrowArgumentOutOfRangeException()
+        {
+            // Win32 FILE_FLAG_BACKUP_SEMANTICS (0x02000000)
+            const FileOptions win32BackupSemantics = (FileOptions)0x02000000;
+            var info = new MockDokanFileInfo();
+            var status = _ops.CreateFile(@"\backup_test.txt", DokanNet.FileAccess.WriteData, FileShare.ReadWrite, FileMode.CreateNew, win32BackupSemantics, 0, info);
+            Assert.Equal(DokanResult.Success, status);
+            Assert.NotNull(info.Context);
+
+            _ops.CloseFile(@"\backup_test.txt", info);
+            Assert.True(File.Exists(Path.Combine(_tempDir, "backup_test.txt")));
+        }
     }
 }
