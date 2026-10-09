@@ -11,6 +11,12 @@ namespace ApeFree.DonateDisk.Contracts
     public interface IDiskOperationsService
     {
         /// <summary>
+        /// 远程文件系统变动事件（当 Slave 端内部文件发生新建、修改、移动、删除等变动时主动推送给 Master 端）
+        /// </summary>
+        [RpcEvent(IsForcedSubscription = true)]
+        event EventHandler<FileChangeEventDto> FileChanged;
+
+        /// <summary>
         /// 获取共享卷标与文件系统信息
         /// </summary>
         DiskVolumeInfoDto GetVolumeInfo();

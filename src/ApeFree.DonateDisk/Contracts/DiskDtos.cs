@@ -116,4 +116,61 @@ namespace ApeFree.DonateDisk.Contracts
         /// </summary>
         public string? ErrorMessage { get; set; }
     }
+
+    /// <summary>
+    /// 文件系统变更类型
+    /// </summary>
+    public enum FileChangeType
+    {
+        /// <summary>
+        /// 新建文件或目录
+        /// </summary>
+        Created = 1,
+
+        /// <summary>
+        /// 删除文件或目录
+        /// </summary>
+        Deleted = 2,
+
+        /// <summary>
+        /// 修改文件内容或属性
+        /// </summary>
+        Changed = 3,
+
+        /// <summary>
+        /// 重命名或移动文件或目录
+        /// </summary>
+        Renamed = 4
+    }
+
+    /// <summary>
+    /// 远程文件系统变动事件通知数据对象
+    /// </summary>
+    public class FileChangeEventDto
+    {
+        /// <summary>
+        /// 变动类型
+        /// </summary>
+        public FileChangeType ChangeType { get; set; }
+
+        /// <summary>
+        /// 变动对象的相对路径（例如 @"\Docs\NewFile.txt"）
+        /// </summary>
+        public string RelativePath { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 重命名或移动前的原始相对路径（仅当 ChangeType == Renamed 时有效）
+        /// </summary>
+        public string? OldRelativePath { get; set; }
+
+        /// <summary>
+        /// 是否为目录
+        /// </summary>
+        public bool IsDirectory { get; set; }
+
+        /// <summary>
+        /// 事件发生时间（UTC）
+        /// </summary>
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    }
 }

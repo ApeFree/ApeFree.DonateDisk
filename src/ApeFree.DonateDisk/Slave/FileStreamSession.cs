@@ -31,6 +31,12 @@ namespace ApeFree.DonateDisk.Slave
         /// </summary>
         public DateTime LastAccessTime { get; private set; }
 
+        /// <summary>
+        /// 初始化文件流会话
+        /// </summary>
+        /// <param name="handleId">句柄唯一标识</param>
+        /// <param name="relativePath">相对路径</param>
+        /// <param name="stream">物理文件流</param>
         public FileStreamSession(long handleId, string relativePath, FileStream stream)
         {
             HandleId = handleId;
@@ -81,7 +87,15 @@ namespace ApeFree.DonateDisk.Slave
 
                 if (data == null || data.Length == 0) return 0;
 
-                Stream.Seek(offset, SeekOrigin.Begin);
+                if (offset < 0)
+                {
+                    Stream.Seek(0, SeekOrigin.End);
+                }
+                else
+                {
+                    Stream.Seek(offset, SeekOrigin.Begin);
+                }
+
                 Stream.Write(data, 0, data.Length);
                 return data.Length;
             }
@@ -113,6 +127,9 @@ namespace ApeFree.DonateDisk.Slave
             }
         }
 
+        /// <summary>
+        /// 释放文件流并刷新缓冲区
+        /// </summary>
         public void Dispose()
         {
             lock (_lock)

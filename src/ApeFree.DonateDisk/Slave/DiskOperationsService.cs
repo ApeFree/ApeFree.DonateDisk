@@ -11,13 +11,18 @@ namespace ApeFree.DonateDisk.Slave
     /// <summary>
     /// 运行在 Slave 端的虚拟磁盘操作核心实现。
     /// 负责映射真实物理磁盘目录，提供强安全沙箱的文件系统操作，并通过 RPC 暴露给 Master 端。
+    /// 内置 FileSystemWatcher 实时监听目录变动并通过 RPC 事件主动通知 Master。
     /// </summary>
     public class DiskOperationsService : IDiskOperationsService, IDisposable
     {
         private readonly SafePathResolver _pathResolver;
         private readonly ConcurrentDictionary<long, FileStreamSession> _sessions = new ConcurrentDictionary<long, FileStreamSession>();
+        private readonly FileSystemWatcher _watcher;
         private long _handleCounter = 100;
         private bool _isDisposed;
+
+        /// <inheritdoc/>
+        public event EventHandler<FileChangeEventDto>? FileChanged;
 
         /// <summary>
         /// 卷标名称
@@ -48,6 +53,61 @@ namespace ApeFree.DonateDisk.Slave
                 VolumeLabel = volumeLabel;
             }
             IsReadOnly = isReadOnly;
+
+            // 初始化物理目录监视器
+            _watcher = new FileSystemWatcher(_pathResolver.RootDirectory)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.Attributes
+            };
+
+            _watcher.Created += (s, e) => OnWatcherEvent(FileChangeType.Created, e.FullPath);
+            _watcher.Deleted += (s, e) => OnWatcherEvent(FileChangeType.Deleted, e.FullPath);
+            _watcher.Changed += (s, e) => OnWatcherEvent(FileChangeType.Changed, e.FullPath);
+            _watcher.Renamed += (s, e) => OnWatcherRenamed(e.OldFullPath, e.FullPath);
+            _watcher.EnableRaisingEvents = true;
+        }
+
+        private void OnWatcherEvent(FileChangeType changeType, string fullPath)
+        {
+            try
+            {
+                var rel = _pathResolver.GetRelativePath(fullPath);
+                bool isDir = Directory.Exists(fullPath);
+                FileChanged?.Invoke(this, new FileChangeEventDto
+                {
+                    ChangeType = changeType,
+                    RelativePath = rel,
+                    IsDirectory = isDir,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            catch
+            {
+                // 忽略被监视目录外的路径解析异常
+            }
+        }
+
+        private void OnWatcherRenamed(string oldFullPath, string newFullPath)
+        {
+            try
+            {
+                var oldRel = _pathResolver.GetRelativePath(oldFullPath);
+                var newRel = _pathResolver.GetRelativePath(newFullPath);
+                bool isDir = Directory.Exists(newFullPath);
+                FileChanged?.Invoke(this, new FileChangeEventDto
+                {
+                    ChangeType = FileChangeType.Renamed,
+                    RelativePath = newRel,
+                    OldRelativePath = oldRel,
+                    IsDirectory = isDir,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            catch
+            {
+                // 忽略被监视目录外的路径解析异常
+            }
         }
 
         /// <inheritdoc/>
@@ -79,7 +139,6 @@ namespace ApeFree.DonateDisk.Slave
             }
             catch
             {
-                // 回退假数据（默认 100GB）以防非卷设备报错
                 const long defaultSize = 100L * 1024 * 1024 * 1024;
                 return new DiskFreeSpaceDto
                 {
@@ -98,12 +157,15 @@ namespace ApeFree.DonateDisk.Slave
             if (File.Exists(fullPath))
             {
                 var fi = new FileInfo(fullPath);
+                var attrs = fi.Attributes;
+                if (attrs == 0) attrs = FileAttributes.Normal;
+
                 return new DiskItemInfoDto
                 {
                     Name = fi.Name,
                     IsDirectory = false,
                     Length = fi.Length,
-                    Attributes = fi.Attributes,
+                    Attributes = attrs,
                     CreationTime = fi.CreationTimeUtc,
                     LastAccessTime = fi.LastAccessTimeUtc,
                     LastWriteTime = fi.LastWriteTimeUtc
@@ -118,7 +180,7 @@ namespace ApeFree.DonateDisk.Slave
                     Name = di.Name,
                     IsDirectory = true,
                     Length = 0,
-                    Attributes = di.Attributes,
+                    Attributes = di.Attributes | FileAttributes.Directory,
                     CreationTime = di.CreationTimeUtc,
                     LastAccessTime = di.LastAccessTimeUtc,
                     LastWriteTime = di.LastWriteTimeUtc
@@ -149,9 +211,15 @@ namespace ApeFree.DonateDisk.Slave
                 {
                     bool isDir = (entry.Attributes & FileAttributes.Directory) == FileAttributes.Directory;
                     long len = 0;
+                    var attrs = entry.Attributes;
                     if (!isDir && entry is FileInfo fi)
                     {
                         len = fi.Length;
+                        if (attrs == 0) attrs = FileAttributes.Normal;
+                    }
+                    else if (isDir)
+                    {
+                        attrs |= FileAttributes.Directory;
                     }
 
                     results.Add(new DiskItemInfoDto
@@ -159,7 +227,7 @@ namespace ApeFree.DonateDisk.Slave
                         Name = entry.Name,
                         IsDirectory = isDir,
                         Length = len,
-                        Attributes = entry.Attributes,
+                        Attributes = attrs,
                         CreationTime = entry.CreationTimeUtc,
                         LastAccessTime = entry.LastAccessTimeUtc,
                         LastWriteTime = entry.LastWriteTimeUtc
@@ -179,7 +247,7 @@ namespace ApeFree.DonateDisk.Slave
         {
             var fullPath = _pathResolver.ResolveFullPath(path);
 
-            // 若路径对应目录或以反斜杠结尾且物理目录存在
+            // 若路径对应已有目录
             if (Directory.Exists(fullPath))
             {
                 return new FileOpenResultDto
@@ -192,10 +260,34 @@ namespace ApeFree.DonateDisk.Slave
             }
 
             var fileMode = (FileMode)mode;
-            var fileAccess = (FileAccess)access;
-            var fileShare = (FileShare)share;
+            var fileOptions = (FileOptions)options;
 
-            // 只读保护拦截
+            // 转换文件访问权限（安全规约掩码，支持标准与 Win32 访问掩码）
+            FileAccess fileAccess = FileAccess.Read;
+            if (access == (int)FileAccess.Write)
+            {
+                fileAccess = FileAccess.Write;
+            }
+            else if (access == (int)FileAccess.ReadWrite)
+            {
+                fileAccess = FileAccess.ReadWrite;
+            }
+            else
+            {
+                // 包含写入掩码 (GenericWrite 0x40000000, WriteData 2, AppendData 4, Delete 0x10000)
+                bool hasWrite = (access & 0x40000000) != 0 || (access & 2) != 0 || (access & 4) != 0;
+                // 包含读取掩码 (GenericRead 0x80000000, ReadData 1, Execute 0x20)
+                bool hasRead = (access & unchecked((int)0x80000000)) != 0 || (access & 1) != 0 || (access & 0x20) != 0;
+
+                if (hasWrite && hasRead) fileAccess = FileAccess.ReadWrite;
+                else if (hasWrite) fileAccess = FileAccess.Write;
+                else fileAccess = FileAccess.Read;
+            }
+
+            // 默认赋予共享读写及删除权限，避免 Windows 资源管理器多线程同时预览冲突
+            FileShare fileShare = (FileShare)share | FileShare.ReadWrite | FileShare.Delete;
+
+            // 只读保护模式拦截
             if (IsReadOnly && (fileAccess.HasFlag(FileAccess.Write) || fileMode == FileMode.Create || fileMode == FileMode.CreateNew || fileMode == FileMode.Truncate))
             {
                 return new FileOpenResultDto
@@ -206,27 +298,59 @@ namespace ApeFree.DonateDisk.Slave
                 };
             }
 
+            bool exists = File.Exists(fullPath);
+
+            // 检查已存在冲突
+            if (fileMode == FileMode.CreateNew && exists)
+            {
+                return new FileOpenResultDto
+                {
+                    HandleId = 0,
+                    NtStatusCode = unchecked((int)0xC0000035), // STATUS_OBJECT_NAME_COLLISION (AlreadyExists)
+                    ErrorMessage = "文件已存在。"
+                };
+            }
+
+            // 检查文件不存在冲突
+            if ((fileMode == FileMode.Open || fileMode == FileMode.Truncate) && !exists)
+            {
+                return new FileOpenResultDto
+                {
+                    HandleId = 0,
+                    NtStatusCode = unchecked((int)0xC0000034), // STATUS_OBJECT_NAME_NOT_FOUND (FileNotFound)
+                    ErrorMessage = "文件不存在。"
+                };
+            }
+
             try
             {
-                // 确保上级目录存在
+                // 确保上级父目录存在
                 var parentDir = Path.GetDirectoryName(fullPath);
-                if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir) && (fileMode == FileMode.Create || fileMode == FileMode.CreateNew || fileMode == FileMode.OpenOrCreate))
+                if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir) &&
+                    (fileMode == FileMode.Create || fileMode == FileMode.CreateNew || fileMode == FileMode.OpenOrCreate))
                 {
                     Directory.CreateDirectory(parentDir);
                 }
 
-                var fs = new FileStream(fullPath, fileMode, fileAccess, fileShare);
+                var fs = new FileStream(fullPath, fileMode, fileAccess, fileShare, 4096, fileOptions);
                 long handleId = System.Threading.Interlocked.Increment(ref _handleCounter);
 
                 var session = new FileStreamSession(handleId, path, fs);
                 _sessions[handleId] = session;
+
+                // 若以 Create 或 OpenOrCreate 打开已存在的文件，在 Windows 内核返回 AlreadyExists 状态码代表打开了已有文件
+                int statusCode = 0;
+                if (exists && (fileMode == FileMode.Create || fileMode == FileMode.OpenOrCreate))
+                {
+                    statusCode = unchecked((int)0xC0000035); // STATUS_OBJECT_NAME_COLLISION (AlreadyExists)
+                }
 
                 return new FileOpenResultDto
                 {
                     HandleId = handleId,
                     IsDirectory = false,
                     Length = fs.Length,
-                    NtStatusCode = 0 // Success
+                    NtStatusCode = statusCode
                 };
             }
             catch (FileNotFoundException)
@@ -341,11 +465,23 @@ namespace ApeFree.DonateDisk.Slave
             Directory.CreateDirectory(fullPath);
         }
 
+        private bool IsRootDirectory(string fullPath)
+        {
+            var trimmedFull = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var trimmedRoot = _pathResolver.RootDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(trimmedFull, trimmedRoot, StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <inheritdoc/>
         public void DeleteFile(string path)
         {
             if (IsReadOnly) throw new UnauthorizedAccessException("只读模式禁止删除文件。");
             var fullPath = _pathResolver.ResolveFullPath(path);
+            if (IsRootDirectory(fullPath))
+            {
+                throw new UnauthorizedAccessException("禁止删除根目录。");
+            }
+
             if (File.Exists(fullPath))
             {
                 File.Delete(fullPath);
@@ -357,6 +493,11 @@ namespace ApeFree.DonateDisk.Slave
         {
             if (IsReadOnly) throw new UnauthorizedAccessException("只读模式禁止删除目录。");
             var fullPath = _pathResolver.ResolveFullPath(path);
+            if (IsRootDirectory(fullPath))
+            {
+                throw new UnauthorizedAccessException("禁止删除根目录。");
+            }
+
             if (Directory.Exists(fullPath))
             {
                 Directory.Delete(fullPath, recursive: true);
@@ -369,6 +510,11 @@ namespace ApeFree.DonateDisk.Slave
             if (IsReadOnly) throw new UnauthorizedAccessException("只读模式禁止重命名或移动。");
             var oldFull = _pathResolver.ResolveFullPath(oldPath);
             var newFull = _pathResolver.ResolveFullPath(newPath);
+
+            if (IsRootDirectory(oldFull))
+            {
+                throw new UnauthorizedAccessException("禁止重命名或移动根目录。");
+            }
 
             if (File.Exists(oldFull))
             {
@@ -444,10 +590,21 @@ namespace ApeFree.DonateDisk.Slave
             }
         }
 
+        /// <summary>
+        /// 释放服务资源，停止文件系统监听并释放流
+        /// </summary>
         public void Dispose()
         {
             if (_isDisposed) return;
             _isDisposed = true;
+
+            try
+            {
+                _watcher.EnableRaisingEvents = false;
+                _watcher.Dispose();
+            }
+            catch { }
+
             DisposeAllSessions();
         }
     }

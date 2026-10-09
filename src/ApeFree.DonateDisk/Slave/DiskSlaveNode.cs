@@ -1,6 +1,7 @@
 using ApeFree.ApeRpc;
 using ApeFree.ApeRpc.BytesIO;
 using ApeFree.DonateDisk.Common;
+using ApeFree.DonateDisk.Contracts;
 using STTech.BytesIO.Tcp;
 using System;
 using System.IO;
@@ -31,6 +32,11 @@ namespace ApeFree.DonateDisk.Slave
         /// 当与 Master 端的连接中断时触发
         /// </summary>
         public event EventHandler? Disconnected;
+
+        /// <summary>
+        /// 当本地被分享目录内的文件发生创建、修改、重命名或删除变动时触发
+        /// </summary>
+        public event EventHandler<FileChangeEventDto>? FileChanged;
 
         /// <summary>
         /// 获取配置项
@@ -76,6 +82,10 @@ namespace ApeFree.DonateDisk.Slave
                 : _options.VolumeLabel;
 
             _diskService = new DiskOperationsService(resolver, label, _options.IsReadOnly);
+            _diskService.FileChanged += (s, e) =>
+            {
+                FileChanged?.Invoke(this, e);
+            };
 
             // 2. 初始化 RPC 终端与网络客户端
             var terminalInfo = new TerminalInfo
@@ -126,6 +136,9 @@ namespace ApeFree.DonateDisk.Slave
             _diskService?.DisposeAllSessions();
         }
 
+        /// <summary>
+        /// 释放 Slave 节点资源，断开网络连接并释放所有打开的文件流
+        /// </summary>
         public void Dispose()
         {
             if (_isDisposed) return;

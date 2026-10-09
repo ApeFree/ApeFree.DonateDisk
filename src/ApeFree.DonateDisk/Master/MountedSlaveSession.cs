@@ -53,6 +53,21 @@ namespace ApeFree.DonateDisk.Master
         /// </summary>
         public DateTime MountedTime { get; }
 
+        /// <summary>
+        /// 当监听到远端 Slave 目录发生文件变动时触发
+        /// </summary>
+        public event EventHandler<FileChangeEventDto>? RemoteFileChanged;
+
+        /// <summary>
+        /// 初始化已挂载的 Slave 会话
+        /// </summary>
+        /// <param name="client">底层客户端通信对象</param>
+        /// <param name="driveLetter">分配的盘符</param>
+        /// <param name="mountPoint">挂载点字符串</param>
+        /// <param name="operations">Dokan 操作实现</param>
+        /// <param name="remoteDiskService">远程磁盘 RPC 代理</param>
+        /// <param name="volumeInfo">卷信息</param>
+        /// <param name="driveLetterManager">盘符管理器</param>
         public MountedSlaveSession(
             BytesClient client,
             char driveLetter,
@@ -70,8 +85,13 @@ namespace ApeFree.DonateDisk.Master
             VolumeInfo = volumeInfo ?? throw new ArgumentNullException(nameof(volumeInfo));
             _driveLetterManager = driveLetterManager ?? throw new ArgumentNullException(nameof(driveLetterManager));
             MountedTime = DateTime.UtcNow;
+
+            Operations.FileChanged += (s, e) => RemoteFileChanged?.Invoke(this, e);
         }
 
+        /// <summary>
+        /// 释放挂载会话，卸载 Dokan 驱动器并归还盘符
+        /// </summary>
         public void Dispose()
         {
             if (_isDisposed) return;
@@ -84,6 +104,14 @@ namespace ApeFree.DonateDisk.Master
             catch
             {
                 // 忽略卸载时的异常
+            }
+
+            try
+            {
+                Operations.Dispose();
+            }
+            catch
+            {
             }
 
             _driveLetterManager.Release(DriveLetter);

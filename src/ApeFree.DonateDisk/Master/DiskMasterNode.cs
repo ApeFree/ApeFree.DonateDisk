@@ -44,6 +44,11 @@ namespace ApeFree.DonateDisk.Master
         public event EventHandler<(BytesClient Client, Exception Exception)>? MountFailed;
 
         /// <summary>
+        /// 当监听到已挂载的 Slave 端目录文件发生变动时触发
+        /// </summary>
+        public event EventHandler<(MountedSlaveSession Session, FileChangeEventDto Change)>? RemoteFileChanged;
+
+        /// <summary>
         /// 获取配置项
         /// </summary>
         public DiskMasterOptions Options => _options;
@@ -151,6 +156,11 @@ namespace ApeFree.DonateDisk.Master
                             opt.MountPoint = mountPoint;
                         });
 
+                    session.RemoteFileChanged += (s, change) =>
+                    {
+                        RemoteFileChanged?.Invoke(this, (session, change));
+                    };
+
                     session.DokanInstance = builder.Build(ops);
                     _sessions[e.Client] = session;
 
@@ -193,6 +203,9 @@ namespace ApeFree.DonateDisk.Master
             }
         }
 
+        /// <summary>
+        /// 释放 Master 节点资源，停止监听并卸载所有挂载盘符
+        /// </summary>
         public void Dispose()
         {
             if (_isDisposed) return;
