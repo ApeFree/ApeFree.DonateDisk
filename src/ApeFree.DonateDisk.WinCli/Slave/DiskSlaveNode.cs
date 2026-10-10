@@ -2,6 +2,8 @@ using ApeFree.ApeRpc;
 using ApeFree.ApeRpc.BytesIO;
 using ApeFree.DonateDisk.Common;
 using ApeFree.DonateDisk.Contracts;
+using STTech.BytesIO.Core;
+using STTech.BytesIO.P2P;
 using STTech.BytesIO.Tcp;
 using System;
 using System.IO;
@@ -13,11 +15,12 @@ namespace ApeFree.DonateDisk.Slave
     /// <summary>
     /// Slave 节点控制宿主。
     /// 负责将本地指定物理目录包装为虚拟磁盘服务，主动拨号连接 Master 端并发布 ApeRpc 服务。
+    /// 支持标准 TCP 直连以及 P2P (Libp2p) 点对点去中心化传输。
     /// </summary>
     public class DiskSlaveNode : IDisposable
     {
         private readonly DiskSlaveOptions _options;
-        private TcpClient? _tcpClient;
+        private BytesClient? _client;
         private RpcTerminal? _terminal;
         private BytesRpcTerminalAddon? _addon;
         private DiskOperationsService? _diskService;
@@ -51,7 +54,7 @@ namespace ApeFree.DonateDisk.Slave
         /// <summary>
         /// 当前是否已连接
         /// </summary>
-        public bool IsConnected => _tcpClient != null && _tcpClient.IsConnected;
+        public bool IsConnected => _client != null && _client.IsConnected;
 
         /// <summary>
         /// 初始化 Slave 节点
@@ -94,32 +97,70 @@ namespace ApeFree.DonateDisk.Slave
             };
             _terminal = new RpcTerminal(terminalInfo);
 
-            _tcpClient = new TcpClient
+            if (_options.UseP2P)
             {
-                Host = _options.TargetHost,
-                Port = _options.TargetPort
-            };
+                var peerClient = new PeerClient();
+
+                string remoteAddr;
+                if (!string.IsNullOrWhiteSpace(_options.P2PRemoteAddress))
+                {
+                    remoteAddr = _options.P2PRemoteAddress;
+                }
+                else
+                {
+                    var host = string.IsNullOrWhiteSpace(_options.TargetHost) ? "127.0.0.1" : _options.TargetHost;
+                    var port = _options.P2PPort > 0 ? _options.P2PPort : 4001;
+                    if (!string.IsNullOrWhiteSpace(_options.P2PPeerId))
+                    {
+                        remoteAddr = $"/ip4/{host}/tcp/{port}/p2p/{_options.P2PPeerId}";
+                    }
+                    else
+                    {
+                        remoteAddr = $"/ip4/{host}/tcp/{port}";
+                    }
+                }
+
+                peerClient.RemoteAddress = remoteAddr;
+                peerClient.Options.EnableRelay = _options.EnableRelay;
+                peerClient.Options.EnableDht = _options.EnableDht;
+                peerClient.Options.EnableMdns = _options.EnableMdns;
+                peerClient.Options.EnableQuic = _options.EnableQuic;
+                if (_options.BootstrapPeers?.Count > 0)
+                {
+                    peerClient.Options.BootstrapPeers.AddRange(_options.BootstrapPeers);
+                }
+
+                _client = peerClient;
+            }
+            else
+            {
+                _client = new TcpClient
+                {
+                    Host = _options.TargetHost,
+                    Port = _options.TargetPort
+                };
+            }
 
             // 注册断开连接事件监听，及时释放本地文件句柄
-            _tcpClient.OnDisconnected += (s, e) =>
+            _client.OnDisconnected += (s, e) =>
             {
                 _diskService?.DisposeAllSessions();
                 Disconnected?.Invoke(this, EventArgs.Empty);
             };
 
-            _tcpClient.OnConnectedSuccessfully += (s, e) =>
+            _client.OnConnectedSuccessfully += (s, e) =>
             {
                 Connected?.Invoke(this, EventArgs.Empty);
             };
 
             // 3. 挂载 BytesRpc 插件并绑定信道
-            _addon = new BytesRpcTerminalAddon(_terminal, _tcpClient);
+            _addon = new BytesRpcTerminalAddon(_terminal, _client);
 
             // 4. 注册服务契约实现
             _terminal.RegisterService(_diskService);
 
             // 5. 连接 Master 端
-            var connectResult = await _tcpClient.ConnectAsync();
+            var connectResult = await _client.ConnectAsync(new ConnectArgument { CancellationToken = cancellationToken });
             return connectResult.IsSuccess;
         }
 
@@ -128,9 +169,9 @@ namespace ApeFree.DonateDisk.Slave
         /// </summary>
         public void Stop()
         {
-            if (_tcpClient != null && _tcpClient.IsConnected)
+            if (_client != null && _client.IsConnected)
             {
-                _tcpClient.Disconnect();
+                _client.Disconnect();
             }
 
             _diskService?.DisposeAllSessions();
@@ -145,8 +186,8 @@ namespace ApeFree.DonateDisk.Slave
             _isDisposed = true;
 
             Stop();
-            _tcpClient?.Dispose();
-            _diskService?.Dispose();
+
+            _client?.Dispose();
             _addon?.Dispose();
         }
     }

@@ -77,13 +77,22 @@ ApeFree.DonateDisk.WinCli.exe -m -p 9821 -d Z
 
 # 或指定监听 IP（例如绑定局域网网卡）：
 ApeFree.DonateDisk.WinCli.exe -m -i 192.168.1.100 -p 9821 -d Z
+
+# 启动 Master 端 P2P (Libp2p) 监听：
+ApeFree.DonateDisk.WinCli.exe -m -p2p --p2p-port 4001 -d Z
 ```
 
 ### 5.3 启动 Slave 端 (主动捐赠)
 在 Slave 机器上执行：
 ```bash
-# 以 Slave 客户端模式运行，将本地 D:\MyProjects 目录主动分享给 Master
+# 【标准 TCP 模式】将本地 D:\MyProjects 目录主动分享给 Master
 ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\MyProjects" -n "ProjectDisk"
+
+# 【P2P 模式】通过 Multiaddr 点对点连接 Master 并捐赠磁盘：
+ApeFree.DonateDisk.WinCli.exe -s -p2p -d "D:\MyProjects" -addr "/ip4/192.168.1.100/tcp/4001/p2p/12D3KooW..."
+
+# 【P2P 模式】指定主机、端口与 PeerId，启用 Relay 中继以穿透 NAT：
+ApeFree.DonateDisk.WinCli.exe -s -p2p -d "D:\MyProjects" -h 192.168.1.100 --p2p-port 4001 --peer-id 12D3KooW... --relay
 
 # 若仅允许 Master 读取、禁止修改或删除，可开启只读保护：
 ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\PublicDocs" -r

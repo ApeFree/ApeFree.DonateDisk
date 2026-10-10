@@ -32,9 +32,10 @@
   <ItemGroup>
     <PackageReference Include="ApeFree.ApeRpc.BytesIO" Version="0.0.3-alpha61009" />
     <PackageReference Include="DokanNet" Version="2.3.0.3" />
+    <PackageReference Include="STTech.BytesIO.P2P" Version="3.3.0.1-alpha61010" />
   </ItemGroup>
 
-  <!-- 修剪保护：避免 RPC 反射调度、数据契约 DTO 及 DokanNet 原生桥接在修剪时被意外剥离 -->
+  <!-- 修剪保护：避免 RPC 反射调度、数据契约 DTO 及 DokanNet / Libp2p 在修剪时被意外剥离 -->
   <ItemGroup>
     <TrimmerRootAssembly Include="ApeFree.DonateDisk" />
     <TrimmerRootAssembly Include="ApeFree.DonateDisk.WinCli" />
@@ -44,6 +45,9 @@
     <TrimmerRootAssembly Include="STTech.CodePlus" />
     <TrimmerRootAssembly Include="ApeFree.Protocols.Json" />
     <TrimmerRootAssembly Include="DokanNet" />
+    <TrimmerRootAssembly Include="STTech.BytesIO.P2P" />
+    <TrimmerRootAssembly Include="Nethermind.Libp2p" />
+    <TrimmerRootAssembly Include="Nethermind.Libp2p.Core" />
   </ItemGroup>
 
 </Project>

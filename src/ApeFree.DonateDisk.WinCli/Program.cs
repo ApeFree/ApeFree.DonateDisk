@@ -3,6 +3,7 @@ using ApeFree.DonateDisk.Master;
 using ApeFree.DonateDisk.Slave;
 using DokanNet;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -26,14 +27,14 @@ namespace ApeFree.DonateDisk.WinCli
             Console.Title = $"ApeFree.DonateDisk.WinCli v{appVersion} - 远程虚拟磁盘工具";
 
             // 1. 检查是否请求帮助信息
-            if (args.Any(a => a.Equals("--help", StringComparison.OrdinalIgnoreCase) || a.Equals("-?", StringComparison.OrdinalIgnoreCase) || a.Equals("-h", StringComparison.OrdinalIgnoreCase) && !args.Any(x => x.Equals("-s", StringComparison.OrdinalIgnoreCase) || x.Equals("--slave", StringComparison.OrdinalIgnoreCase))))
+            if (args.Any(a => a.Equals("--help", StringComparison.OrdinalIgnoreCase) || a.Equals("-?", StringComparison.OrdinalIgnoreCase) || (a.Equals("-h", StringComparison.OrdinalIgnoreCase) && !args.Any(x => x.Equals("-s", StringComparison.OrdinalIgnoreCase) || x.Equals("--slave", StringComparison.OrdinalIgnoreCase)))))
             {
-                // 若只有 help 或指定了 mode + help
                 PrintOverallHelp();
                 return 0;
             }
 
-            // 2. 检测运行模式（Master 或 Slave）
+            // 2. 检测运行模式（Master 或 Slave）与 P2P 标志
+            var isP2P = args.Any(a => a.Equals("-p2p", StringComparison.OrdinalIgnoreCase) || a.Equals("--p2p", StringComparison.OrdinalIgnoreCase));
             var mode = DetectMode(args, out var filteredArgs);
 
             if (mode == RunMode.None)
@@ -49,11 +50,11 @@ namespace ApeFree.DonateDisk.WinCli
             // 3. 根据模式分派执行
             if (mode == RunMode.Master)
             {
-                return await RunMasterAsync(filteredArgs, appVersion);
+                return await RunMasterAsync(filteredArgs, appVersion, isP2P);
             }
             else
             {
-                return await RunSlaveAsync(filteredArgs, appVersion);
+                return await RunSlaveAsync(filteredArgs, appVersion, isP2P);
             }
         }
 
@@ -116,7 +117,7 @@ namespace ApeFree.DonateDisk.WinCli
 
         #region Master 运行逻辑
 
-        private static async Task<int> RunMasterAsync(string[] args, string appVersion)
+        private static async Task<int> RunMasterAsync(string[] args, string appVersion, bool isP2P)
         {
             Console.Title = $"ApeFree.DonateDisk.WinCli v{appVersion} - [Master 模式] 远程磁盘挂载服务端";
             PrintMasterBanner(appVersion);
@@ -124,10 +125,10 @@ namespace ApeFree.DonateDisk.WinCli
             // 检查本地 Dokany 驱动与运行时环境
             CheckDokanyDriver();
 
-            var options = ParseMasterArguments(args);
+            var options = ParseMasterArguments(args, isP2P);
             if (options == null)
             {
-                options = PromptInteractiveMasterOptions();
+                options = PromptInteractiveMasterOptions(isP2P);
                 if (options == null)
                 {
                     return 1;
@@ -140,7 +141,19 @@ namespace ApeFree.DonateDisk.WinCli
             Console.ResetColor();
             Console.WriteLine($"  程序版本:        v{appVersion}");
             Console.WriteLine($"  运行模式:        Master (服务端挂载节点)");
-            Console.WriteLine($"  监听网络地址:    {options.ListenHost}:{options.ListenPort}");
+            Console.WriteLine($"  通信协议:        {(options.UseP2P ? "P2P (Libp2p 去中心化点对点)" : "标准 TCP 直连")}");
+            if (options.UseP2P)
+            {
+                Console.WriteLine($"  P2P 监听端口:    {options.P2PPort}");
+                Console.WriteLine($"  Relay 中继穿透:  {(options.EnableRelay ? "已启用" : "未启用")}");
+                Console.WriteLine($"  DHT 节点发现:    {(options.EnableDht ? "已启用" : "未启用")}");
+                Console.WriteLine($"  mDNS 局域网发现: {(options.EnableMdns ? "已启用" : "未启用")}");
+                if (options.EnableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
+            }
+            else
+            {
+                Console.WriteLine($"  监听网络地址:    {options.ListenHost}:{options.ListenPort}");
+            }
             Console.WriteLine($"  首选驱动器盘符:  {options.PreferredDriveLetter}:\\ (向下自动顺延)");
             Console.WriteLine($"  挂载磁盘类型:    {(options.MountAsRemovable ? "可移动驱动器 (Removable)" : "本地固定磁盘 (Fixed)")}");
             Console.WriteLine("=========================================================");
@@ -193,11 +206,29 @@ namespace ApeFree.DonateDisk.WinCli
                 Console.ResetColor();
             };
 
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在启动 TCP 服务端监听 ({options.ListenHost}:{options.ListenPort})...");
+            var listenDesc = options.UseP2P ? $"P2P 端口 {options.P2PPort}" : $"TCP {options.ListenHost}:{options.ListenPort}";
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在启动 Master 服务端监听 ({listenDesc})...");
 
             try
             {
                 await masterNode.StartAsync();
+
+                if (options.UseP2P)
+                {
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    if (!string.IsNullOrEmpty(masterNode.P2PLocalPeerId))
+                    {
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [P2P 就绪] 本地 PeerId: {masterNode.P2PLocalPeerId}");
+                    }
+                    if (masterNode.P2PListenAddresses?.Count > 0)
+                    {
+                        foreach (var addr in masterNode.P2PListenAddresses)
+                        {
+                            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [P2P 监听] {addr}");
+                        }
+                    }
+                    Console.ResetColor();
+                }
 
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Master 服务端正在运行，等待 Slave 连入捐赠磁盘... (按 Ctrl+C 可停止服务)");
@@ -229,14 +260,23 @@ namespace ApeFree.DonateDisk.WinCli
             return 0;
         }
 
-        private static DiskMasterOptions? ParseMasterArguments(string[] args)
+        private static DiskMasterOptions? ParseMasterArguments(string[] args, bool isP2P)
         {
-            if (args.Length == 0) return null;
+            if (args.Length == 0 && !isP2P) return null;
 
             string host = "0.0.0.0";
             int port = 9821;
             char? letter = 'Z';
             bool removable = true;
+
+            // P2P 选项
+            bool useP2P = isP2P;
+            int p2pPort = 4001;
+            bool enableRelay = false;
+            bool enableDht = false;
+            bool enableMdns = false;
+            bool enableQuic = false;
+            var bootstrapPeers = new List<string>();
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -262,6 +302,35 @@ namespace ApeFree.DonateDisk.WinCli
                 {
                     removable = false;
                 }
+                else if (arg == "-p2p" || arg == "--p2p")
+                {
+                    useP2P = true;
+                }
+                else if (arg == "--p2p-port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var pPort))
+                {
+                    p2pPort = pPort;
+                    i++;
+                }
+                else if (arg == "--relay")
+                {
+                    enableRelay = true;
+                }
+                else if (arg == "--dht")
+                {
+                    enableDht = true;
+                }
+                else if (arg == "--mdns")
+                {
+                    enableMdns = true;
+                }
+                else if (arg == "--quic")
+                {
+                    enableQuic = true;
+                }
+                else if (arg == "--bootstrap" && i + 1 < args.Length)
+                {
+                    bootstrapPeers.Add(args[++i]);
+                }
                 else if (arg == "--help" || arg == "-?")
                 {
                     PrintMasterHelp();
@@ -274,26 +343,61 @@ namespace ApeFree.DonateDisk.WinCli
                 ListenHost = host,
                 ListenPort = port,
                 PreferredDriveLetter = letter,
-                MountAsRemovable = removable
+                MountAsRemovable = removable,
+                UseP2P = useP2P,
+                P2PPort = p2pPort,
+                EnableRelay = enableRelay,
+                EnableDht = enableDht,
+                EnableMdns = enableMdns,
+                EnableQuic = enableQuic,
+                BootstrapPeers = bootstrapPeers
             };
         }
 
-        private static DiskMasterOptions? PromptInteractiveMasterOptions()
+        private static DiskMasterOptions? PromptInteractiveMasterOptions(bool isP2P)
         {
             Console.WriteLine("检测到未指定 Master 详细启动参数，进入交互式引导配置：");
             Console.WriteLine();
 
-            Console.Write("请输入本地监听端口号 (默认 9821): ");
-            var portInput = Console.ReadLine()?.Trim();
-            int port = 9821;
-            if (!string.IsNullOrWhiteSpace(portInput) && int.TryParse(portInput, out var p))
+            bool useP2P = isP2P;
+            if (!useP2P)
             {
-                port = p;
+                Console.Write("请选择网络传输协议 [1: TCP直连, 2: P2P点对点] (默认 1): ");
+                var protoInput = Console.ReadLine()?.Trim();
+                if (protoInput == "2") useP2P = true;
             }
 
-            Console.Write("请输入监听绑定的 IP 地址 (默认 0.0.0.0): ");
-            var ipInput = Console.ReadLine()?.Trim();
-            var host = string.IsNullOrWhiteSpace(ipInput) ? "0.0.0.0" : ipInput;
+            int port = 9821;
+            int p2pPort = 4001;
+            string host = "0.0.0.0";
+            bool enableRelay = false;
+
+            if (useP2P)
+            {
+                Console.Write("请输入 P2P 本地监听端口 (默认 4001): ");
+                var pInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(pInput) && int.TryParse(pInput, out var pp))
+                {
+                    p2pPort = pp;
+                }
+
+                Console.Write("是否启用 Relay 中继以支持 NAT 穿透？(y/N): ");
+                var relayInput = Console.ReadLine()?.Trim();
+                enableRelay = string.Equals(relayInput, "y", StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                Console.Write("请输入本地监听端口号 (默认 9821): ");
+                var portInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(portInput) && int.TryParse(portInput, out var p))
+                {
+                    port = p;
+                }
+
+                Console.Write("请输入监听绑定的 IP 地址 (默认 0.0.0.0): ");
+                var ipInput = Console.ReadLine()?.Trim();
+                host = string.IsNullOrWhiteSpace(ipInput) ? "0.0.0.0" : ipInput;
+            }
 
             Console.Write("请输入首选分配的驱动器盘符 (默认 Z): ");
             var driveInput = Console.ReadLine()?.Trim().ToUpperInvariant();
@@ -308,7 +412,10 @@ namespace ApeFree.DonateDisk.WinCli
                 ListenHost = host,
                 ListenPort = port,
                 PreferredDriveLetter = letter,
-                MountAsRemovable = true
+                MountAsRemovable = true,
+                UseP2P = useP2P,
+                P2PPort = p2pPort,
+                EnableRelay = enableRelay
             };
         }
 
@@ -338,15 +445,15 @@ namespace ApeFree.DonateDisk.WinCli
 
         #region Slave 运行逻辑
 
-        private static async Task<int> RunSlaveAsync(string[] args, string appVersion)
+        private static async Task<int> RunSlaveAsync(string[] args, string appVersion, bool isP2P)
         {
             Console.Title = $"ApeFree.DonateDisk.WinCli v{appVersion} - [Slave 模式] 远程磁盘主动分享客户端";
             PrintSlaveBanner(appVersion);
 
-            var options = ParseSlaveArguments(args);
+            var options = ParseSlaveArguments(args, isP2P);
             if (options == null)
             {
-                options = PromptInteractiveSlaveOptions();
+                options = PromptInteractiveSlaveOptions(isP2P);
                 if (options == null)
                 {
                     return 1;
@@ -359,7 +466,22 @@ namespace ApeFree.DonateDisk.WinCli
             Console.ResetColor();
             Console.WriteLine($"  程序版本:        v{appVersion}");
             Console.WriteLine($"  运行模式:        Slave (客户端分享节点)");
-            Console.WriteLine($"  Master 主机:     {options.TargetHost}:{options.TargetPort}");
+            Console.WriteLine($"  通信协议:        {(options.UseP2P ? "P2P (Libp2p 去中心化点对点)" : "标准 TCP 直连")}");
+            if (options.UseP2P)
+            {
+                var targetAddr = !string.IsNullOrEmpty(options.P2PRemoteAddress)
+                    ? options.P2PRemoteAddress
+                    : $"/ip4/{options.TargetHost}/tcp/{options.P2PPort}" + (!string.IsNullOrEmpty(options.P2PPeerId) ? $"/p2p/{options.P2PPeerId}" : "");
+                Console.WriteLine($"  目标 Multiaddr:  {targetAddr}");
+                Console.WriteLine($"  Relay 中继穿透:  {(options.EnableRelay ? "已启用" : "未启用")}");
+                Console.WriteLine($"  DHT 节点发现:    {(options.EnableDht ? "已启用" : "未启用")}");
+                Console.WriteLine($"  mDNS 局域网发现: {(options.EnableMdns ? "已启用" : "未启用")}");
+                if (options.EnableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
+            }
+            else
+            {
+                Console.WriteLine($"  Master 主机:     {options.TargetHost}:{options.TargetPort}");
+            }
             Console.WriteLine($"  分享物理目录:    {options.LocalDirectory}");
             Console.WriteLine($"  卷标显示名称:    {options.VolumeLabel ?? Path.GetFileName(options.LocalDirectory.TrimEnd('\\', '/'))}");
             Console.WriteLine($"  只读保护模式:    {(options.IsReadOnly ? "已开启 [只读]" : "已关闭 [可读写]")}");
@@ -400,7 +522,11 @@ namespace ApeFree.DonateDisk.WinCli
                 Console.ResetColor();
             };
 
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在连接 Master ({options.TargetHost}:{options.TargetPort})...");
+            var connectTarget = options.UseP2P
+                ? (!string.IsNullOrEmpty(options.P2PRemoteAddress) ? options.P2PRemoteAddress : $"{options.TargetHost}:{options.P2PPort}")
+                : $"{options.TargetHost}:{options.TargetPort}";
+
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在连接 Master ({connectTarget})...");
 
             try
             {
@@ -408,7 +534,7 @@ namespace ApeFree.DonateDisk.WinCli
                 if (!success)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [连接失败] 无法连接到 Master 端 ({options.TargetHost}:{options.TargetPort})。请检查 Master 是否已启动或网络端口是否通畅。");
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [连接失败] 无法连接到 Master 端 ({connectTarget})。请检查 Master 是否已启动或网络端口/地址是否正确。");
                     Console.ResetColor();
                     return 2;
                 }
@@ -442,15 +568,26 @@ namespace ApeFree.DonateDisk.WinCli
             return 0;
         }
 
-        private static DiskSlaveOptions? ParseSlaveArguments(string[] args)
+        private static DiskSlaveOptions? ParseSlaveArguments(string[] args, bool isP2P)
         {
-            if (args.Length == 0) return null;
+            if (args.Length == 0 && !isP2P) return null;
 
             string host = "127.0.0.1";
             int port = 9821;
             string? dir = null;
             string? label = null;
             bool isReadOnly = false;
+
+            // P2P 专用选项
+            bool useP2P = isP2P;
+            string? p2pRemoteAddr = null;
+            string? p2pPeerId = null;
+            int p2pPort = 4001;
+            bool enableRelay = false;
+            bool enableDht = false;
+            bool enableMdns = false;
+            bool enableQuic = false;
+            var bootstrapPeers = new List<string>();
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -476,6 +613,46 @@ namespace ApeFree.DonateDisk.WinCli
                 {
                     isReadOnly = true;
                 }
+                else if (arg == "-p2p" || arg == "--p2p")
+                {
+                    useP2P = true;
+                }
+                else if ((arg == "-addr" || arg == "--remote-addr") && i + 1 < args.Length)
+                {
+                    p2pRemoteAddr = args[++i];
+                    useP2P = true;
+                }
+                else if ((arg == "-peer" || arg == "--peer-id") && i + 1 < args.Length)
+                {
+                    p2pPeerId = args[++i];
+                    useP2P = true;
+                }
+                else if (arg == "--p2p-port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var pPort))
+                {
+                    p2pPort = pPort;
+                    useP2P = true;
+                    i++;
+                }
+                else if (arg == "--relay")
+                {
+                    enableRelay = true;
+                }
+                else if (arg == "--dht")
+                {
+                    enableDht = true;
+                }
+                else if (arg == "--mdns")
+                {
+                    enableMdns = true;
+                }
+                else if (arg == "--quic")
+                {
+                    enableQuic = true;
+                }
+                else if (arg == "--bootstrap" && i + 1 < args.Length)
+                {
+                    bootstrapPeers.Add(args[++i]);
+                }
                 else if (arg == "--help" || arg == "-?")
                 {
                     PrintSlaveHelp();
@@ -485,10 +662,6 @@ namespace ApeFree.DonateDisk.WinCli
 
             if (string.IsNullOrWhiteSpace(dir))
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[错误] 必须通过 -d 或 --dir 指定待分享的本地物理目录。");
-                Console.ResetColor();
-                PrintSlaveHelp();
                 return null;
             }
 
@@ -507,11 +680,20 @@ namespace ApeFree.DonateDisk.WinCli
                 TargetPort = port,
                 LocalDirectory = fullDir,
                 VolumeLabel = label,
-                IsReadOnly = isReadOnly
+                IsReadOnly = isReadOnly,
+                UseP2P = useP2P,
+                P2PRemoteAddress = p2pRemoteAddr,
+                P2PPeerId = p2pPeerId,
+                P2PPort = p2pPort,
+                EnableRelay = enableRelay,
+                EnableDht = enableDht,
+                EnableMdns = enableMdns,
+                EnableQuic = enableQuic,
+                BootstrapPeers = bootstrapPeers
             };
         }
 
-        private static DiskSlaveOptions? PromptInteractiveSlaveOptions()
+        private static DiskSlaveOptions? PromptInteractiveSlaveOptions(bool isP2P)
         {
             Console.WriteLine("检测到未指定 Slave 详细启动参数，进入交互式引导输入：");
             Console.WriteLine();
@@ -526,16 +708,62 @@ namespace ApeFree.DonateDisk.WinCli
                 return null;
             }
 
-            Console.Write("请输入 Master 端主机 IP 地址 (默认 127.0.0.1): ");
-            var hostInput = Console.ReadLine()?.Trim();
-            var host = string.IsNullOrWhiteSpace(hostInput) ? "127.0.0.1" : hostInput;
-
-            Console.Write("请输入 Master 端端口号 (默认 9821): ");
-            var portInput = Console.ReadLine()?.Trim();
-            int port = 9821;
-            if (!string.IsNullOrWhiteSpace(portInput) && int.TryParse(portInput, out var p))
+            bool useP2P = isP2P;
+            if (!useP2P)
             {
-                port = p;
+                Console.Write("请选择网络传输协议 [1: TCP直连, 2: P2P点对点] (默认 1): ");
+                var protoInput = Console.ReadLine()?.Trim();
+                if (protoInput == "2") useP2P = true;
+            }
+
+            string host = "127.0.0.1";
+            int port = 9821;
+            string? p2pRemoteAddr = null;
+            int p2pPort = 4001;
+            bool enableRelay = false;
+
+            if (useP2P)
+            {
+                Console.Write("请输入 Master 端 Multiaddr 地址或主机 IP (默认 127.0.0.1): ");
+                var addrInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(addrInput))
+                {
+                    if (addrInput.StartsWith("/"))
+                    {
+                        p2pRemoteAddr = addrInput;
+                    }
+                    else
+                    {
+                        host = addrInput;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(p2pRemoteAddr))
+                {
+                    Console.Write("请输入 Master 端 P2P 端口号 (默认 4001): ");
+                    var pInput = Console.ReadLine()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(pInput) && int.TryParse(pInput, out var pp))
+                    {
+                        p2pPort = pp;
+                    }
+                }
+
+                Console.Write("是否启用 Relay 中继进行 NAT 穿透？(y/N): ");
+                var relayInput = Console.ReadLine()?.Trim();
+                enableRelay = string.Equals(relayInput, "y", StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                Console.Write("请输入 Master 端主机 IP 地址 (默认 127.0.0.1): ");
+                var hostInput = Console.ReadLine()?.Trim();
+                host = string.IsNullOrWhiteSpace(hostInput) ? "127.0.0.1" : hostInput;
+
+                Console.Write("请输入 Master 端端口号 (默认 9821): ");
+                var portInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(portInput) && int.TryParse(portInput, out var p))
+                {
+                    port = p;
+                }
             }
 
             Console.Write("请输入自定义虚拟卷标名称 (直接回车使用目录名): ");
@@ -551,7 +779,11 @@ namespace ApeFree.DonateDisk.WinCli
                 TargetPort = port,
                 LocalDirectory = Path.GetFullPath(dir),
                 VolumeLabel = string.IsNullOrWhiteSpace(labelInput) ? null : labelInput,
-                IsReadOnly = isReadOnly
+                IsReadOnly = isReadOnly,
+                UseP2P = useP2P,
+                P2PRemoteAddress = p2pRemoteAddr,
+                P2PPort = p2pPort,
+                EnableRelay = enableRelay
             };
         }
 
@@ -637,13 +869,22 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
 --------------------------------------------------------------------------------
 【Master 服务端模式选项 (-m, --master)】:
   -i, --ip <IP地址>        本地监听网络地址（默认 0.0.0.0）
-  -p, --port <端口>        本地监听端口（默认 9821）
+  -p, --port <端口>        本地 TCP 监听端口（默认 9821）
   -d, --drive <盘符>       首选挂载盘符（默认 Z，若被占用自动向下顺延）
   --fixed                  挂载为本地固定硬盘（默认挂载为可移动磁盘 RemovableDrive）
 
+  [P2P 专用选项]:
+  -p2p, --p2p              启用 P2P (Libp2p) 去中心化监听模式
+  --p2p-port <端口>        P2P 本地监听端口（默认 4001）
+  --relay                  启用 Relay 中继协议以支持 NAT 穿透
+  --dht                    启用 Kademlia DHT 分布式节点发现
+  --mdns                   启用 mDNS 局域网节点发现
+  --quic                   启用 QUIC 传输协议
+  --bootstrap <Multiaddr>  添加引导节点地址
+
 示例:
   ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
-  ApeFree.DonateDisk.WinCli -m -i 127.0.0.1 -p 8899
+  ApeFree.DonateDisk.WinCli -m -p2p --p2p-port 4001 -d Z
 
 --------------------------------------------------------------------------------
 【Slave 客户端模式选项 (-s, --slave)】:
@@ -653,9 +894,26 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
   -n, --name <卷标名称>    挂载后显示的虚拟磁盘名称（默认使用目录名）
   -r, --readonly           以只读保护模式分享（禁止远端修改和删除文件）
 
+  [P2P 专用选项]:
+  -p2p, --p2p              启用 P2P (Libp2p) 去中心化点对点通信模式
+  -addr, --remote-addr <地址> 远程 Master 节点的 Multiaddr 地址
+  -peer, --peer-id <PeerId> 目标 Master 节点的 PeerId
+  --p2p-port <端口>        目标 P2P 端口（默认 4001）
+  --relay                  启用 Relay 中继协议以支持 NAT 穿透
+  --dht                    启用 Kademlia DHT 节点发现
+  --mdns                   启用 mDNS 局域网发现
+  --quic                   启用 QUIC 传输协议
+  --bootstrap <Multiaddr>  添加引导节点地址
+
 示例:
+  # 标准 TCP 模式
   ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
-  ApeFree.DonateDisk.WinCli -s -d ""C:\PublicFiles"" -r
+
+  # P2P 模式（直接指定 Multiaddress）
+  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" -addr ""/ip4/192.168.1.100/tcp/4001/p2p/12D3KooW...""
+
+  # P2P 模式（指定主机、端口与 PeerId）
+  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" -h 192.168.1.100 --p2p-port 4001 --peer-id 12D3KooW...
 ");
         }
 
@@ -664,14 +922,23 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
             Console.WriteLine(@"
 Master 服务端模式选项:
   -i, --ip <IP地址>        本地监听网络地址（默认 0.0.0.0）
-  -p, --port <端口>        本地监听端口（默认 9821）
+  -p, --port <端口>        本地 TCP 监听端口（默认 9821）
   -d, --drive <盘符>       首选挂载盘符（默认 Z，若被占用自动向下顺延）
   --fixed                  挂载为本地固定硬盘（默认挂载为可移动磁盘 RemovableDrive）
+
+P2P 专用选项:
+  -p2p, --p2p              启用 P2P (Libp2p) 监听模式
+  --p2p-port <端口>        P2P 本地监听端口（默认 4001）
+  --relay                  启用 Relay 中继协议
+  --dht                    启用 Kademlia DHT 发现
+  --mdns                   启用 mDNS 局域网发现
+  --quic                   启用 QUIC 传输
+  --bootstrap <Multiaddr>  添加引导节点
   -?, --help               显示本帮助信息
 
 示例:
   ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
-  ApeFree.DonateDisk.WinCli -m -i 127.0.0.1 -p 8899
+  ApeFree.DonateDisk.WinCli -m -p2p --p2p-port 4001 -d Z
 ");
         }
 
@@ -684,11 +951,22 @@ Slave 客户端模式选项:
   -d, --dir <本地路径>     待分享给 Master 的本地物理文件夹路径（必需）
   -n, --name <卷标名称>    挂载后显示的虚拟磁盘名称（默认使用目录名）
   -r, --readonly           以只读保护模式分享（禁止远端修改和删除文件）
+
+P2P 专用选项:
+  -p2p, --p2p              启用 P2P (Libp2p) 点对点传输模式
+  -addr, --remote-addr <地址> 目标 Master 的 Multiaddr 地址
+  -peer, --peer-id <PeerId> 目标 Master 的 PeerId
+  --p2p-port <端口>        目标 P2P 端口（默认 4001）
+  --relay                  启用 Relay 中继协议
+  --dht                    启用 Kademlia DHT 发现
+  --mdns                   启用 mDNS 局域网发现
+  --quic                   启用 QUIC 传输
+  --bootstrap <Multiaddr>  添加引导节点
   -?, --help               显示本帮助信息
 
 示例:
   ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
-  ApeFree.DonateDisk.WinCli -s -d ""C:\PublicFiles"" -r
+  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" -addr ""/ip4/192.168.1.100/tcp/4001/p2p/12D3KooW...""
 ");
         }
 
