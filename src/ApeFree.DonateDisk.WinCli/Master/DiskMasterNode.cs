@@ -26,6 +26,7 @@ namespace ApeFree.DonateDisk.Master
         private readonly ConcurrentDictionary<BytesClient, MountedSlaveSession> _sessions = new ConcurrentDictionary<BytesClient, MountedSlaveSession>();
         private TcpServer? _tcpServer;
         private BootstrapServer? _bootstrapServer;
+        private PeerClient? _p2pClient;
         private RpcTerminal? _terminal;
         private BytesRpcTerminalAddon? _addon;
         private bool _isDisposed;
@@ -66,14 +67,14 @@ namespace ApeFree.DonateDisk.Master
         public IReadOnlyCollection<MountedSlaveSession> MountedSessions => _sessions.Values.ToList();
 
         /// <summary>
-        /// 服务端当前是否正在监听
+        /// 服务端当前是否正在监听或处于已连接状态
         /// </summary>
-        public bool IsListening => (_tcpServer != null && _tcpServer.IsListening) || (_bootstrapServer != null && _bootstrapServer.IsListening);
+        public bool IsListening => (_tcpServer != null && _tcpServer.IsListening) || (_bootstrapServer != null && _bootstrapServer.IsListening) || (_p2pClient != null && _p2pClient.IsConnected);
 
         /// <summary>
         /// 若在 P2P 模式下，获取当前本地节点的 PeerId
         /// </summary>
-        public string? P2PLocalPeerId => _bootstrapServer?.LocalPeerId;
+        public string? P2PLocalPeerId => _p2pClient?.LocalPeerId ?? _bootstrapServer?.LocalPeerId;
 
         /// <summary>
         /// 若在 P2P 模式下，获取当前本地节点的监听 Multiaddr 地址列表
@@ -106,51 +107,81 @@ namespace ApeFree.DonateDisk.Master
 
             if (_options.UseP2P)
             {
-                // 2. 初始化 P2P 节点并连接指定的 P2P 服务端 (p2p-server)
-                _bootstrapServer = new BootstrapServer();
-                _bootstrapServer.Options.ListenAddress = _options.ListenHost;
-                _bootstrapServer.Options.TcpPort = _options.P2PPort > 0 ? _options.P2PPort : 0;
-                _bootstrapServer.Options.EnableRelay = _options.EnableRelay;
-                _bootstrapServer.Options.EnableDht = _options.EnableDht;
-                _bootstrapServer.Options.EnableMdns = _options.EnableMdns;
-                _bootstrapServer.Options.EnableQuic = _options.EnableQuic;
-
-                if (!string.IsNullOrWhiteSpace(_options.IdentitySeed))
-                {
-                    _bootstrapServer.Options.IdentitySeed = P2PAddressHelper.ParseSeed(_options.IdentitySeed);
-                }
-
-                // 主动连接指定的 P2P 引导与中继服务端
                 if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                 {
-                    var serverMultiaddr = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
-                    _bootstrapServer.Options.BootstrapPeers.Add(serverMultiaddr);
-                }
+                    // 2a. 主动连接指定的公网 P2P 服务端 (p2p-server)
+                    var peerClient = new PeerClient();
+                    peerClient.RemoteAddress = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
+                    peerClient.Options.EnableRelay = _options.EnableRelay;
+                    peerClient.Options.EnableDht = _options.EnableDht;
+                    peerClient.Options.EnableMdns = _options.EnableMdns;
+                    peerClient.Options.EnableQuic = _options.EnableQuic;
 
-                if (_options.BootstrapPeers?.Count > 0)
-                {
-                    foreach (var peer in _options.BootstrapPeers)
+                    if (!string.IsNullOrWhiteSpace(_options.IdentitySeed))
                     {
-                        if (!_bootstrapServer.Options.BootstrapPeers.Contains(peer))
-                        {
-                            _bootstrapServer.Options.BootstrapPeers.Add(peer);
-                        }
+                        peerClient.Options.IdentitySeed = P2PAddressHelper.ParseSeed(_options.IdentitySeed);
+                    }
+
+                    _p2pClient = peerClient;
+                    _addon.BindClient(peerClient);
+
+                    peerClient.OnConnectedSuccessfully += (s, e) =>
+                    {
+                        HandleClientConnected(peerClient);
+                    };
+
+                    peerClient.OnDisconnected += (s, e) =>
+                    {
+                        HandleClientDisconnected(peerClient);
+                    };
+
+                    var connectResult = await peerClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 }).ConfigureAwait(false);
+                    if (!connectResult.IsSuccess)
+                    {
+                        throw new InvalidOperationException($"无法连接至 P2P 服务端 ({_options.P2PServerAddress}): {connectResult.ErrorCode}");
                     }
                 }
-
-                _bootstrapServer.PeerConnected += (s, e) =>
+                else
                 {
-                    _addon.BindClient(e.Client);
-                    HandleClientConnected(e.Client);
-                };
+                    // 2b. 作为本地 P2P 服务端监听
+                    _bootstrapServer = new BootstrapServer();
+                    _bootstrapServer.Options.ListenAddress = _options.ListenHost;
+                    _bootstrapServer.Options.TcpPort = _options.P2PPort > 0 ? _options.P2PPort : 4001;
+                    _bootstrapServer.Options.EnableRelay = _options.EnableRelay;
+                    _bootstrapServer.Options.EnableDht = _options.EnableDht;
+                    _bootstrapServer.Options.EnableMdns = _options.EnableMdns;
+                    _bootstrapServer.Options.EnableQuic = _options.EnableQuic;
 
-                _bootstrapServer.PeerDisconnected += (s, e) =>
-                {
-                    _addon.UnbindClient(e.Client);
-                    HandleClientDisconnected(e.Client);
-                };
+                    if (!string.IsNullOrWhiteSpace(_options.IdentitySeed))
+                    {
+                        _bootstrapServer.Options.IdentitySeed = P2PAddressHelper.ParseSeed(_options.IdentitySeed);
+                    }
 
-                await _bootstrapServer.StartAsync().ConfigureAwait(false);
+                    if (_options.BootstrapPeers?.Count > 0)
+                    {
+                        foreach (var peer in _options.BootstrapPeers)
+                        {
+                            if (!_bootstrapServer.Options.BootstrapPeers.Contains(peer))
+                            {
+                                _bootstrapServer.Options.BootstrapPeers.Add(peer);
+                            }
+                        }
+                    }
+
+                    _bootstrapServer.PeerConnected += (s, e) =>
+                    {
+                        _addon.BindClient(e.Client);
+                        HandleClientConnected(e.Client);
+                    };
+
+                    _bootstrapServer.PeerDisconnected += (s, e) =>
+                    {
+                        _addon.UnbindClient(e.Client);
+                        HandleClientDisconnected(e.Client);
+                    };
+
+                    await _bootstrapServer.StartAsync().ConfigureAwait(false);
+                }
             }
             else
             {
@@ -266,6 +297,13 @@ namespace ApeFree.DonateDisk.Master
                 await _bootstrapServer.CloseAsync();
                 _bootstrapServer = null;
             }
+
+            if (_p2pClient != null)
+            {
+                _p2pClient.Disconnect();
+                _p2pClient.Dispose();
+                _p2pClient = null;
+            }
         }
 
         /// <summary>
@@ -279,6 +317,7 @@ namespace ApeFree.DonateDisk.Master
             StopAsync().GetAwaiter().GetResult();
             _tcpServer?.Dispose();
             _bootstrapServer?.Dispose();
+            _p2pClient?.Dispose();
             _addon?.Dispose();
         }
     }

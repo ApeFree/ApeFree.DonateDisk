@@ -295,7 +295,7 @@ namespace ApeFree.DonateDisk.WinCli
             string? identitySeed = null;
             string? targetPeerId = null;
             int p2pPort = 0;
-            bool enableRelay = true;
+            bool enableRelay = false;
             bool enableDht = false;
             bool enableMdns = false;
             bool enableQuic = false;
@@ -465,7 +465,7 @@ namespace ApeFree.DonateDisk.WinCli
                 UseP2P = useP2P,
                 P2PServerAddress = p2pServerAddr,
                 IdentitySeed = identitySeed,
-                EnableRelay = true
+                EnableRelay = false
             };
         }
 
@@ -637,7 +637,7 @@ namespace ApeFree.DonateDisk.WinCli
             string? p2pRemoteAddr = null;
             string? identitySeed = null;
             int p2pPort = 0;
-            bool enableRelay = true;
+            bool enableRelay = false;
             bool enableDht = false;
             bool enableMdns = false;
             bool enableQuic = false;
@@ -847,7 +847,7 @@ namespace ApeFree.DonateDisk.WinCli
                 P2PServerAddress = p2pServerAddr,
                 TargetPeerId = targetPeerId,
                 IdentitySeed = identitySeed,
-                EnableRelay = true
+                EnableRelay = false
             };
         }
 
@@ -897,9 +897,9 @@ namespace ApeFree.DonateDisk.WinCli
             Console.WriteLine("=================== P2P 服务端配置 ===================");
             Console.ResetColor();
             Console.WriteLine($"  程序版本:        v{appVersion}");
-            Console.WriteLine($"  运行模式:        P2P 引导与中继服务端 (Bootstrap & Circuit Relay)");
+            Console.WriteLine($"  运行模式:        P2P 引导与数据中继服务端 (Bootstrap & Data Relay)");
             Console.WriteLine($"  监听绑定地址:    {host}:{port}");
-            Console.WriteLine($"  Relay 中继协议:  已启用 (Libp2p Circuit Relay v2)");
+            Console.WriteLine($"  全双工数据桥接:  已启用 (Transparent Byte Bridging)");
             Console.WriteLine($"  DHT 路由发现:    已启用");
             if (enableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
             Console.WriteLine("======================================================");
@@ -916,7 +916,7 @@ namespace ApeFree.DonateDisk.WinCli
             using var server = new STTech.BytesIO.P2P.BootstrapServer();
             server.Options.ListenAddress = host;
             server.Options.TcpPort = port;
-            server.Options.EnableRelay = true;
+            server.Options.EnableRelay = false;
             server.Options.EnableDht = true;
             server.Options.EnableMdns = true;
             server.Options.EnableQuic = enableQuic;
@@ -926,18 +926,68 @@ namespace ApeFree.DonateDisk.WinCli
                 server.Options.IdentitySeed = P2PAddressHelper.ParseSeed(seed);
             }
 
+            STTech.BytesIO.P2P.PeerClient? client1 = null;
+            STTech.BytesIO.P2P.PeerClient? client2 = null;
+            object bridgeLock = new object();
+
             server.PeerConnected += (s, e) =>
             {
+                var c = e.Client;
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点连入] 远端 PeerId: {e.Client.RemotePeerId ?? "未知"} 地址: {e.Client.RemoteAddress}");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点连入] 远端 PeerId: {c.RemotePeerId ?? "未知"} 地址: {c.RemoteAddress}");
                 Console.ResetColor();
+
+                lock (bridgeLock)
+                {
+                    if (client1 == null || !client1.IsConnected)
+                    {
+                        client1 = c;
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 1 已就绪 ({c.RemotePeerId})，等待节点 2 连入以建立全双工数据桥接...");
+                    }
+                    else if (client2 == null || !client2.IsConnected)
+                    {
+                        client2 = c;
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 2 已连入 ({c.RemotePeerId})！正在建立全双工数据传输桥接...");
+                        Console.ResetColor();
+
+                        // 建立全双工字节流中继转发
+                        client1.OnDataReceived += (sender, args) =>
+                        {
+                            try { client2?.Send(args.Data.Memory.ToArray()); } catch { }
+                        };
+                        client2.OnDataReceived += (sender, args) =>
+                        {
+                            try { client1?.Send(args.Data.Memory.ToArray()); } catch { }
+                        };
+
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 双向中继数据隧道已打通！Master 与 Slave 现可通过本服务端协同通信。");
+                        Console.ResetColor();
+                    }
+                }
             };
 
             server.PeerDisconnected += (s, e) =>
             {
+                var c = e.Client;
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点断开] 远端 PeerId: {e.Client.RemotePeerId ?? "未知"} 原因: {e.DisconnectedInfo.ReasonCode}");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点断开] 远端 PeerId: {c.RemotePeerId ?? "未知"} 原因: {e.DisconnectedInfo.ReasonCode}");
                 Console.ResetColor();
+
+                lock (bridgeLock)
+                {
+                    if (c == client1)
+                    {
+                        client1 = null;
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 1 已断开，等待重新接入...");
+                    }
+                    else if (c == client2)
+                    {
+                        client2 = null;
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 2 已断开，等待重新接入...");
+                    }
+                }
             };
 
             try

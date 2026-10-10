@@ -137,20 +137,13 @@ namespace ApeFree.DonateDisk.Slave
                 {
                     remoteAddr = _options.P2PRemoteAddress;
                 }
-                else if (!string.IsNullOrWhiteSpace(_options.TargetPeerId))
-                {
-                    if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
-                    {
-                        remoteAddr = P2PAddressHelper.BuildRelayAddress(_options.P2PServerAddress, _options.TargetPeerId);
-                    }
-                    else
-                    {
-                        remoteAddr = $"/p2p/{_options.TargetPeerId}";
-                    }
-                }
                 else if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                 {
                     remoteAddr = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
+                }
+                else if (!string.IsNullOrWhiteSpace(_options.TargetPeerId))
+                {
+                    remoteAddr = $"/p2p/{_options.TargetPeerId}";
                 }
                 else
                 {
@@ -190,7 +183,7 @@ namespace ApeFree.DonateDisk.Slave
             _terminal.RegisterService(_diskService);
 
             // 5. 连接 Master 端
-            var connectResult = await _client.ConnectAsync(new ConnectArgument { CancellationToken = cancellationToken });
+            var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 10000, CancellationToken = cancellationToken });
             return connectResult.IsSuccess;
         }
 

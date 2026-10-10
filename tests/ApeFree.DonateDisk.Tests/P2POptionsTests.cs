@@ -157,7 +157,7 @@ namespace ApeFree.DonateDisk.Tests
             {
                 UseP2P = true,
                 P2PServerAddress = "127.0.0.1:4001",
-                EnableRelay = true
+                EnableRelay = false
             };
 
             using var masterNode = new DiskMasterNode(options);
@@ -165,6 +165,105 @@ namespace ApeFree.DonateDisk.Tests
             Assert.True(masterNode.Options.UseP2P);
             Assert.False(masterNode.IsListening);
             Assert.Null(masterNode.P2PLocalPeerId);
+        }
+
+        [Fact]
+        public async Task TestBootstrapServerStart()
+        {
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.TcpPort = 4055;
+            server.Options.EnableRelay = false;
+            await server.StartAsync();
+            Assert.True(server.IsListening);
+            Assert.NotNull(server.LocalPeerId);
+            await server.CloseAsync();
+        }
+
+        [Fact]
+        public async Task TestBootstrapServerAndPeerClientConnection()
+        {
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.ListenAddress = "127.0.0.1";
+            server.Options.TcpPort = 4056;
+            server.Options.EnableRelay = false;
+            await server.StartAsync();
+
+            var peerConnectedTcs = new TaskCompletionSource<STTech.BytesIO.P2P.PeerClient>();
+            server.PeerConnected += (s, e) =>
+            {
+                peerConnectedTcs.TrySetResult(e.Client);
+            };
+
+            using var client = new STTech.BytesIO.P2P.PeerClient();
+            client.RemoteAddress = $"/ip4/127.0.0.1/tcp/4056/p2p/{server.LocalPeerId}";
+            client.Options.EnableRelay = false;
+
+            var connectResult = await client.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 });
+            Assert.True(connectResult.IsSuccess, $"Connect failed: {connectResult.ErrorCode}");
+
+            var connectedServerClient = await peerConnectedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.NotNull(connectedServerClient);
+
+            await server.CloseAsync();
+        }
+
+        [Fact]
+        public async Task TestP2PServerDualClientBridging()
+        {
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.ListenAddress = "127.0.0.1";
+            server.Options.TcpPort = 4057;
+            server.Options.EnableRelay = false;
+            await server.StartAsync();
+
+            STTech.BytesIO.P2P.PeerClient? client1ServerSide = null;
+            STTech.BytesIO.P2P.PeerClient? client2ServerSide = null;
+            var bridgeReadyTcs = new TaskCompletionSource<bool>();
+
+            server.PeerConnected += (s, e) =>
+            {
+                if (client1ServerSide == null)
+                {
+                    client1ServerSide = e.Client;
+                }
+                else if (client2ServerSide == null)
+                {
+                    client2ServerSide = e.Client;
+
+                    // 建立双向桥接
+                    client1ServerSide.OnDataReceived += (sender, args) => client2ServerSide.Send(args.Data.Memory.ToArray());
+                    client2ServerSide.OnDataReceived += (sender, args) => client1ServerSide.Send(args.Data.Memory.ToArray());
+
+                    bridgeReadyTcs.TrySetResult(true);
+                }
+            };
+
+            // 客户端 1 (模拟 Master)
+            using var client1 = new STTech.BytesIO.P2P.PeerClient();
+            client1.RemoteAddress = $"/ip4/127.0.0.1/tcp/4057/p2p/{server.LocalPeerId}";
+            client1.Options.EnableRelay = false;
+            var conn1 = await client1.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 });
+            Assert.True(conn1.IsSuccess);
+
+            // 客户端 2 (模拟 Slave)
+            using var client2 = new STTech.BytesIO.P2P.PeerClient();
+            client2.RemoteAddress = $"/ip4/127.0.0.1/tcp/4057/p2p/{server.LocalPeerId}";
+            client2.Options.EnableRelay = false;
+            var conn2 = await client2.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 });
+            Assert.True(conn2.IsSuccess);
+
+            await bridgeReadyTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // 测试跨中继双向数据传输
+            var client2ReceivedTcs = new TaskCompletionSource<byte[]>();
+            client2.OnDataReceived += (s, e) => client2ReceivedTcs.TrySetResult(e.Data.Memory.ToArray());
+
+            await client1.SendAsync(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF });
+            var receivedData = await client2ReceivedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }, receivedData);
+
+            await server.CloseAsync();
         }
     }
 }

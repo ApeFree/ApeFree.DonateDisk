@@ -58,9 +58,9 @@ namespace ApeFree.DonateDisk.Master
         public string? TargetPeerId { get; set; }
 
         /// <summary>
-        /// 是否启用 Relay 中继以支持 NAT 穿透（P2P 模式下默认开启）
+        /// 是否启用 Relay 中继协议（Nethermind.Libp2p 尚未实现内建 Relay，默认 false）
         /// </summary>
-        public bool EnableRelay { get; set; } = true;
+        public bool EnableRelay { get; set; } = false;
 
         /// <summary>
         /// 是否启用 Kademlia DHT 节点发现
