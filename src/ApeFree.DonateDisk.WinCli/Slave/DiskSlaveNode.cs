@@ -194,7 +194,7 @@ namespace ApeFree.DonateDisk.Slave
             _terminal.RegisterService(_diskService);
 
             // 5. 连接 Master 端
-            var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 10000, CancellationToken = cancellationToken });
+            var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 25000, CancellationToken = cancellationToken });
             LastConnectResult = connectResult;
             return connectResult.IsSuccess;
         }

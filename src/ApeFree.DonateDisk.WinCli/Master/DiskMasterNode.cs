@@ -136,7 +136,7 @@ namespace ApeFree.DonateDisk.Master
                         HandleClientDisconnected(peerClient);
                     };
 
-                    var connectResult = await peerClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 }).ConfigureAwait(false);
+                    var connectResult = await peerClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 25000 }).ConfigureAwait(false);
                     if (!connectResult.IsSuccess)
                     {
                         var errDetail = connectResult.Exception != null ? $" ({connectResult.Exception.Message})" : string.Empty;
