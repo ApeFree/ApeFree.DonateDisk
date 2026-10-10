@@ -3,6 +3,7 @@ using DokanNet;
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,7 +13,8 @@ namespace ApeFree.DonateDisk.WinMaster
     {
         private static async Task<int> Main(string[] args)
         {
-            Console.Title = "ApeFree.DonateDisk.WinMaster - 远程磁盘自动挂载服务端";
+            var appVersion = GetAppVersion();
+            Console.Title = $"ApeFree.DonateDisk.WinMaster v{appVersion} - 远程磁盘自动挂载服务端";
 
             PrintBanner();
 
@@ -33,6 +35,7 @@ namespace ApeFree.DonateDisk.WinMaster
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=================== 服务端配置 ===================");
             Console.ResetColor();
+            Console.WriteLine($"  程序版本:        v{appVersion}");
             Console.WriteLine($"  监听网络地址:    {options.ListenHost}:{options.ListenPort}");
             Console.WriteLine($"  首选驱动器盘符:  {options.PreferredDriveLetter}:\\ (向下自动顺延)");
             Console.WriteLine($"  挂载磁盘类型:    {(options.MountAsRemovable ? "可移动驱动器 (Removable)" : "本地固定磁盘 (Fixed)")}");
@@ -144,8 +147,22 @@ namespace ApeFree.DonateDisk.WinMaster
             }
         }
 
+        private static string GetAppVersion()
+        {
+            var infoVer = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(infoVer))
+            {
+                var plusIndex = infoVer.IndexOf('+');
+                return plusIndex > 0 ? infoVer.Substring(0, plusIndex) : infoVer;
+            }
+
+            var ver = typeof(Program).Assembly.GetName().Version;
+            return ver != null ? ver.ToString() : "0.0.1.0";
+        }
+
         private static void PrintBanner()
         {
+            var version = GetAppVersion();
             Console.ForegroundColor = ConsoleColor.Magenta;
             Console.WriteLine(@"
     ___               ______                 ____                    __       ____  _      __  
@@ -154,8 +171,10 @@ namespace ApeFree.DonateDisk.WinMaster
  / ___ |/ /_/ /  __/ __/ / /  /  __/  __/ / /_/ / /_/ / / / / /_/ / /_/  __/ /_/ / (__  ) ,<   
 /_/  |_/ .___/\___/_/   /_/   \___/\___(_)_____/\____/_/ /_/\__,_/\__/\___/_____/_/____/_/|_|  
       /_/                                                             DonateDisk (Master Node) 
- 
             ");
+            Console.ResetColor();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"               >> ApeFree.DonateDisk.WinMaster 远程磁盘挂载服务端 (v{version}) <<\n");
             Console.ResetColor();
         }
 

@@ -8,7 +8,7 @@
 
     <Title>ApeFree.DonateDisk</Title>
     <Product>ApeFree.DonateDisk</Product>
-    <Version>0.0.1.0-alpha261009</Version>
+    <Version>0.0.1.1-alpha61010</Version>
     <Authors>Guijie Lee</Authors>
     <Company>ApeFree</Company>
     <Copyright>Copyright © 2022-2026 ApeFree, All Rights Reserved.</Copyright>
@@ -27,14 +27,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="ApeFree.ApeRpc.BytesIO" Version="0.0.3-alpha61009" />
     <PackageReference Include="DokanNet" Version="2.3.0.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\ApeFree.ApeRpc\ApeFree.ApeRpc.BytesIO\ApeFree.ApeRpc.BytesIO.csproj" />
-    <ProjectReference Include="..\..\..\ApeFree.ApeRpc\ApeFree.ApeRpc\ApeFree.ApeRpc.csproj" />
-    <ProjectReference Include="..\..\..\STTech.BytesIO\STTech.BytesIO\STTech.BytesIO.csproj" />
-    <ProjectReference Include="..\..\..\ApeFree.Protocols\ApeFree.Protocols.Json\ApeFree.Protocols.Json.csproj" />
   </ItemGroup>
 
 </Project>

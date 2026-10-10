@@ -1,6 +1,7 @@
 using ApeFree.DonateDisk.Slave;
 using System;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,7 +11,8 @@ namespace ApeFree.DonateDisk.WinSlave
     {
         private static async Task<int> Main(string[] args)
         {
-            Console.Title = "ApeFree.DonateDisk.WinSlave - 远程磁盘主动分享客户端";
+            var appVersion = GetAppVersion();
+            Console.Title = $"ApeFree.DonateDisk.WinSlave v{appVersion} - 远程磁盘主动分享客户端";
 
             PrintBanner();
 
@@ -29,6 +31,7 @@ namespace ApeFree.DonateDisk.WinSlave
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=================== 运行配置 ===================");
             Console.ResetColor();
+            Console.WriteLine($"  程序版本:        v{appVersion}");
             Console.WriteLine($"  Master 主机:     {options.TargetHost}:{options.TargetPort}");
             Console.WriteLine($"  分享物理目录:    {options.LocalDirectory}");
             Console.WriteLine($"  卷标显示名称:    {options.VolumeLabel ?? Path.GetFileName(options.LocalDirectory.TrimEnd('\\', '/'))}");
@@ -113,8 +116,22 @@ namespace ApeFree.DonateDisk.WinSlave
             return 0;
         }
 
+        private static string GetAppVersion()
+        {
+            var infoVer = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(infoVer))
+            {
+                var plusIndex = infoVer.IndexOf('+');
+                return plusIndex > 0 ? infoVer.Substring(0, plusIndex) : infoVer;
+            }
+
+            var ver = typeof(Program).Assembly.GetName().Version;
+            return ver != null ? ver.ToString() : "0.0.1.0";
+        }
+
         private static void PrintBanner()
         {
+            var version = GetAppVersion();
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine(@"
     ___               ______                 ____                    __       ____  _      __  
@@ -123,8 +140,10 @@ namespace ApeFree.DonateDisk.WinSlave
  / ___ |/ /_/ /  __/ __/ / /  /  __/  __/ / /_/ / /_/ / / / / /_/ / /_/  __/ /_/ / (__  ) ,<   
 /_/  |_/ .___/\___/_/   /_/   \___/\___(_)_____/\____/_/ /_/\__,_/\__/\___/_____/_/____/_/|_|  
       /_/                                                             DonateDisk (Slave Node) 
-
             ");
+            Console.ResetColor();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"               >> ApeFree.DonateDisk.WinSlave 远程磁盘主动分享客户端 (v{version}) <<\n");
             Console.ResetColor();
         }
 
