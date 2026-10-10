@@ -53,6 +53,21 @@ namespace ApeFree.DonateDisk.Slave
         public string? TargetPeerId { get; set; }
 
         /// <summary>
+        /// 目标 Master 端的凭据种子（若 Master 通过固定种子启动，可在此指定相同种子以自动匹配 Master 的 TargetPeerId）
+        /// </summary>
+        public string? MasterSeed { get; set; }
+
+        /// <summary>
+        /// P2P 引导与中继服务端的 PeerId（可选，若未指定则通过 ServerSeed 或默认服务端种子自动推导）
+        /// </summary>
+        public string? ServerPeerId { get; set; }
+
+        /// <summary>
+        /// P2P 引导与中继服务端的凭据种子（可选，若服务端通过固定种子启动，可在此指定相同种子以自动匹配服务端 PeerId）
+        /// </summary>
+        public string? ServerSeed { get; set; }
+
+        /// <summary>
         /// 远程目标节点的完整 Multiaddr 地址（例如: /ip4/192.168.1.100/tcp/4001/p2p/12D3KooW...，若指定则优先使用）
         /// </summary>
         public string? P2PRemoteAddress { get; set; }

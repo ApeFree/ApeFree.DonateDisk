@@ -53,6 +53,16 @@ namespace ApeFree.DonateDisk.Master
         public string? IdentitySeed { get; set; }
 
         /// <summary>
+        /// P2P 引导与中继服务端的 PeerId（可选，若未指定则通过 ServerSeed 或默认服务端种子自动推导）
+        /// </summary>
+        public string? ServerPeerId { get; set; }
+
+        /// <summary>
+        /// P2P 引导与中继服务端的凭据种子（可选，若服务端通过固定种子启动，可在此指定相同种子以自动匹配服务端 PeerId）
+        /// </summary>
+        public string? ServerSeed { get; set; }
+
+        /// <summary>
         /// 目标 Slave 端节点的 PeerId（可选，若配置则主动寻址该 Slave）
         /// </summary>
         public string? TargetPeerId { get; set; }

@@ -111,7 +111,8 @@ namespace ApeFree.DonateDisk.Master
                 {
                     // 2a. 主动连接指定的公网 P2P 服务端 (p2p-server)
                     var peerClient = new PeerClient();
-                    peerClient.RemoteAddress = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
+                    var resolvedServerAddr = P2PAddressHelper.ResolveServerMultiaddr(_options.P2PServerAddress, _options.ServerPeerId, _options.ServerSeed);
+                    peerClient.RemoteAddress = resolvedServerAddr;
                     peerClient.Options.EnableRelay = _options.EnableRelay;
                     peerClient.Options.EnableDht = _options.EnableDht;
                     peerClient.Options.EnableMdns = _options.EnableMdns;
@@ -138,7 +139,8 @@ namespace ApeFree.DonateDisk.Master
                     var connectResult = await peerClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 }).ConfigureAwait(false);
                     if (!connectResult.IsSuccess)
                     {
-                        throw new InvalidOperationException($"无法连接至 P2P 服务端 ({_options.P2PServerAddress}): {connectResult.ErrorCode}");
+                        var errDetail = connectResult.Exception != null ? $" ({connectResult.Exception.Message})" : string.Empty;
+                        throw new InvalidOperationException($"无法连接至 P2P 服务端 ({_options.P2PServerAddress}): {connectResult.ErrorCode}{errDetail}");
                     }
                 }
                 else

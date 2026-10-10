@@ -57,6 +57,11 @@ namespace ApeFree.DonateDisk.Slave
         public bool IsConnected => _client != null && _client.IsConnected;
 
         /// <summary>
+        /// 最近一次连接尝试的结果详情
+        /// </summary>
+        public ConnectResult? LastConnectResult { get; private set; }
+
+        /// <summary>
         /// 若在 P2P 模式下，获取当前本地节点的 PeerId
         /// </summary>
         public string? LocalPeerId => (_client as PeerClient)?.LocalPeerId;
@@ -115,9 +120,15 @@ namespace ApeFree.DonateDisk.Slave
                     peerClient.Options.IdentitySeed = P2PAddressHelper.ParseSeed(_options.IdentitySeed);
                 }
 
+                if (string.IsNullOrWhiteSpace(_options.TargetPeerId) && !string.IsNullOrWhiteSpace(_options.MasterSeed))
+                {
+                    _options.TargetPeerId = P2PAddressHelper.GetPeerIdFromSeed(_options.MasterSeed);
+                }
+
                 if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                 {
-                    peerClient.Options.BootstrapPeers.Add(P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress));
+                    var resolvedServer = P2PAddressHelper.ResolveServerMultiaddr(_options.P2PServerAddress, _options.ServerPeerId, _options.ServerSeed);
+                    peerClient.Options.BootstrapPeers.Add(resolvedServer);
                 }
 
                 if (_options.BootstrapPeers?.Count > 0)
@@ -139,7 +150,7 @@ namespace ApeFree.DonateDisk.Slave
                 }
                 else if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                 {
-                    remoteAddr = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
+                    remoteAddr = P2PAddressHelper.ResolveServerMultiaddr(_options.P2PServerAddress, _options.ServerPeerId, _options.ServerSeed);
                 }
                 else if (!string.IsNullOrWhiteSpace(_options.TargetPeerId))
                 {
@@ -184,6 +195,7 @@ namespace ApeFree.DonateDisk.Slave
 
             // 5. 连接 Master 端
             var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 10000, CancellationToken = cancellationToken });
+            LastConnectResult = connectResult;
             return connectResult.IsSuccess;
         }
 
