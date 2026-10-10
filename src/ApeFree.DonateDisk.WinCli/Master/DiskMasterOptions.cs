@@ -8,12 +8,12 @@ namespace ApeFree.DonateDisk.Master
     public class DiskMasterOptions
     {
         /// <summary>
-        /// 本地监听绑定的主机 IP 或域名（默认 0.0.0.0 监听所有网卡）
+        /// 本地监听绑定的主机 IP 或域名（默认 0.0.0.0 监听所有网卡，仅用于标准 TCP 模式）
         /// </summary>
         public string ListenHost { get; set; } = "0.0.0.0";
 
         /// <summary>
-        /// 本地监听端口（默认 9821）
+        /// 本地监听端口（默认 9821，仅用于标准 TCP 模式）
         /// </summary>
         public int ListenPort { get; set; } = 9821;
 
@@ -33,19 +33,34 @@ namespace ApeFree.DonateDisk.Master
         public string ServiceName { get; set; } = "DiskOperationsService";
 
         /// <summary>
-        /// 是否启用 P2P (Libp2p) 监听模式
+        /// 是否启用 P2P (Libp2p) 去中心化模式
         /// </summary>
         public bool UseP2P { get; set; }
 
         /// <summary>
-        /// P2P 监听端口（默认 4001）
+        /// P2P 引导与中继服务端地址（例如 1.2.3.4:4001 或 /ip4/1.2.3.4/tcp/4001/p2p/QmServer...）
         /// </summary>
-        public int P2PPort { get; set; } = 4001;
+        public string? P2PServerAddress { get; set; }
 
         /// <summary>
-        /// 是否启用 Relay 中继以支持 NAT 穿透
+        /// 本地 P2P 监听端口（默认 0，系统随机选择可用端口）
         /// </summary>
-        public bool EnableRelay { get; set; }
+        public int P2PPort { get; set; } = 0;
+
+        /// <summary>
+        /// 本地节点的身份私钥种子（字符串或十六进制，用于使 Master 的 PeerId 跨重启保持固定）
+        /// </summary>
+        public string? IdentitySeed { get; set; }
+
+        /// <summary>
+        /// 目标 Slave 端节点的 PeerId（可选，若配置则主动寻址该 Slave）
+        /// </summary>
+        public string? TargetPeerId { get; set; }
+
+        /// <summary>
+        /// 是否启用 Relay 中继以支持 NAT 穿透（P2P 模式下默认开启）
+        /// </summary>
+        public bool EnableRelay { get; set; } = true;
 
         /// <summary>
         /// 是否启用 Kademlia DHT 节点发现

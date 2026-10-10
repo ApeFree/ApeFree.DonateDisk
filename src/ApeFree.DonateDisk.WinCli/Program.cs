@@ -18,7 +18,8 @@ namespace ApeFree.DonateDisk.WinCli
         {
             None,
             Master,
-            Slave
+            Slave,
+            P2PServer
         }
 
         private static async Task<int> Main(string[] args)
@@ -33,7 +34,7 @@ namespace ApeFree.DonateDisk.WinCli
                 return 0;
             }
 
-            // 2. 检测运行模式（Master 或 Slave）与 P2P 标志
+            // 2. 检测运行模式（Master、Slave 或 P2P 服务端）与 P2P 标志
             var isP2P = args.Any(a => a.Equals("-p2p", StringComparison.OrdinalIgnoreCase) || a.Equals("--p2p", StringComparison.OrdinalIgnoreCase));
             var mode = DetectMode(args, out var filteredArgs);
 
@@ -48,14 +49,13 @@ namespace ApeFree.DonateDisk.WinCli
             }
 
             // 3. 根据模式分派执行
-            if (mode == RunMode.Master)
+            return mode switch
             {
-                return await RunMasterAsync(filteredArgs, appVersion, isP2P);
-            }
-            else
-            {
-                return await RunSlaveAsync(filteredArgs, appVersion, isP2P);
-            }
+                RunMode.Master => await RunMasterAsync(filteredArgs, appVersion, isP2P),
+                RunMode.Slave => await RunSlaveAsync(filteredArgs, appVersion, isP2P),
+                RunMode.P2PServer => await RunP2PServerAsync(filteredArgs, appVersion),
+                _ => 1
+            };
         }
 
         #region 模式检测与分派
@@ -80,6 +80,12 @@ namespace ApeFree.DonateDisk.WinCli
                     argList.RemoveAt(i);
                     break;
                 }
+                else if (arg == "--p2p-server" || arg == "-server" || arg == "--relay-server")
+                {
+                    mode = RunMode.P2PServer;
+                    argList.RemoveAt(i);
+                    break;
+                }
             }
 
             remainingArgs = argList.ToArray();
@@ -91,10 +97,11 @@ namespace ApeFree.DonateDisk.WinCli
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=================== 请选择运行模式 ===================");
             Console.ResetColor();
-            Console.WriteLine("  [1] Master 挂载服务端 - 监听网络并自动挂载远程 Slave 捐赠的磁盘");
+            Console.WriteLine("  [1] Master 挂载服务端 - 监听网络或连接 P2P 服务端并自动挂载远程磁盘");
             Console.WriteLine("  [2] Slave  分享客户端 - 主动将本地目录分享给 Master 挂载使用");
+            Console.WriteLine("  [3] P2P    引导中继端 - 启动独立公网 P2P 引导与中继服务 (Relay Server)");
             Console.WriteLine("======================================================");
-            Console.Write("请输入选项 [1/2] (默认 1): ");
+            Console.Write("请输入选项 [1/2/3] (默认 1): ");
             var input = Console.ReadLine()?.Trim();
             Console.WriteLine();
 
@@ -105,6 +112,10 @@ namespace ApeFree.DonateDisk.WinCli
             if (input == "2")
             {
                 return RunMode.Slave;
+            }
+            if (input == "3")
+            {
+                return RunMode.P2PServer;
             }
 
             Console.ForegroundColor = ConsoleColor.Red;
@@ -144,10 +155,12 @@ namespace ApeFree.DonateDisk.WinCli
             Console.WriteLine($"  通信协议:        {(options.UseP2P ? "P2P (Libp2p 去中心化点对点)" : "标准 TCP 直连")}");
             if (options.UseP2P)
             {
-                Console.WriteLine($"  P2P 监听端口:    {options.P2PPort}");
+                Console.WriteLine($"  P2P 服务端:      {(!string.IsNullOrEmpty(options.P2PServerAddress) ? options.P2PServerAddress : "未指定 (仅本地监听)")}");
                 Console.WriteLine($"  Relay 中继穿透:  {(options.EnableRelay ? "已启用" : "未启用")}");
-                Console.WriteLine($"  DHT 节点发现:    {(options.EnableDht ? "已启用" : "未启用")}");
-                Console.WriteLine($"  mDNS 局域网发现: {(options.EnableMdns ? "已启用" : "未启用")}");
+                if (!string.IsNullOrEmpty(options.IdentitySeed)) Console.WriteLine("  固定身份种子:    已配置");
+                if (options.P2PPort > 0) Console.WriteLine($"  本地 P2P 端口:   {options.P2PPort}");
+                if (options.EnableDht) Console.WriteLine("  DHT 节点发现:    已启用");
+                if (options.EnableMdns) Console.WriteLine("  mDNS 局域网发现: 已启用");
                 if (options.EnableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
             }
             else
@@ -206,8 +219,10 @@ namespace ApeFree.DonateDisk.WinCli
                 Console.ResetColor();
             };
 
-            var listenDesc = options.UseP2P ? $"P2P 端口 {options.P2PPort}" : $"TCP {options.ListenHost}:{options.ListenPort}";
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在启动 Master 服务端监听 ({listenDesc})...");
+            var listenDesc = options.UseP2P
+                ? (!string.IsNullOrEmpty(options.P2PServerAddress) ? $"已连接 P2P 服务端 {options.P2PServerAddress}" : "本地 P2P 网络")
+                : $"TCP {options.ListenHost}:{options.ListenPort}";
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在启动 Master 服务端 ({listenDesc})...");
 
             try
             {
@@ -218,7 +233,12 @@ namespace ApeFree.DonateDisk.WinCli
                     Console.ForegroundColor = ConsoleColor.Cyan;
                     if (!string.IsNullOrEmpty(masterNode.P2PLocalPeerId))
                     {
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [P2P 就绪] 本地 PeerId: {masterNode.P2PLocalPeerId}");
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [P2P 就绪] Master 本地 PeerId: {masterNode.P2PLocalPeerId}");
+                        if (!string.IsNullOrEmpty(options.P2PServerAddress))
+                        {
+                            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [P2P 提示] Slave 端启动参数参考:");
+                            Console.WriteLine($"           ApeFree.DonateDisk.WinCli -s -p2p --server \"{options.P2PServerAddress}\" --target-peer \"{masterNode.P2PLocalPeerId}\" -d <本地目录>");
+                        }
                     }
                     if (masterNode.P2PListenAddresses?.Count > 0)
                     {
@@ -271,8 +291,11 @@ namespace ApeFree.DonateDisk.WinCli
 
             // P2P 选项
             bool useP2P = isP2P;
-            int p2pPort = 4001;
-            bool enableRelay = false;
+            string? p2pServerAddr = null;
+            string? identitySeed = null;
+            string? targetPeerId = null;
+            int p2pPort = 0;
+            bool enableRelay = true;
             bool enableDht = false;
             bool enableMdns = false;
             bool enableQuic = false;
@@ -306,14 +329,34 @@ namespace ApeFree.DonateDisk.WinCli
                 {
                     useP2P = true;
                 }
+                else if ((arg == "--server" || arg == "--p2p-server") && i + 1 < args.Length)
+                {
+                    p2pServerAddr = args[++i];
+                    useP2P = true;
+                }
+                else if (arg == "--seed" && i + 1 < args.Length)
+                {
+                    identitySeed = args[++i];
+                    useP2P = true;
+                }
+                else if ((arg == "--target-peer" || arg == "--slave-peer") && i + 1 < args.Length)
+                {
+                    targetPeerId = args[++i];
+                    useP2P = true;
+                }
                 else if (arg == "--p2p-port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var pPort))
                 {
                     p2pPort = pPort;
+                    useP2P = true;
                     i++;
                 }
                 else if (arg == "--relay")
                 {
                     enableRelay = true;
+                }
+                else if (arg == "--no-relay")
+                {
+                    enableRelay = false;
                 }
                 else if (arg == "--dht")
                 {
@@ -345,6 +388,9 @@ namespace ApeFree.DonateDisk.WinCli
                 PreferredDriveLetter = letter,
                 MountAsRemovable = removable,
                 UseP2P = useP2P,
+                P2PServerAddress = p2pServerAddr,
+                IdentitySeed = identitySeed,
+                TargetPeerId = targetPeerId,
                 P2PPort = p2pPort,
                 EnableRelay = enableRelay,
                 EnableDht = enableDht,
@@ -368,22 +414,25 @@ namespace ApeFree.DonateDisk.WinCli
             }
 
             int port = 9821;
-            int p2pPort = 4001;
             string host = "0.0.0.0";
-            bool enableRelay = false;
+            string? p2pServerAddr = null;
+            string? identitySeed = null;
 
             if (useP2P)
             {
-                Console.Write("请输入 P2P 本地监听端口 (默认 4001): ");
-                var pInput = Console.ReadLine()?.Trim();
-                if (!string.IsNullOrWhiteSpace(pInput) && int.TryParse(pInput, out var pp))
+                Console.Write("请输入 P2P 服务端地址 (例如 1.2.3.4:4001，留空仅在本地网络运行): ");
+                var sInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(sInput))
                 {
-                    p2pPort = pp;
+                    p2pServerAddr = sInput;
                 }
 
-                Console.Write("是否启用 Relay 中继以支持 NAT 穿透？(y/N): ");
-                var relayInput = Console.ReadLine()?.Trim();
-                enableRelay = string.Equals(relayInput, "y", StringComparison.OrdinalIgnoreCase);
+                Console.Write("请输入固定身份私钥种子 (留空自动生成随机身份): ");
+                var seedInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(seedInput))
+                {
+                    identitySeed = seedInput;
+                }
             }
             else
             {
@@ -414,8 +463,9 @@ namespace ApeFree.DonateDisk.WinCli
                 PreferredDriveLetter = letter,
                 MountAsRemovable = true,
                 UseP2P = useP2P,
-                P2PPort = p2pPort,
-                EnableRelay = enableRelay
+                P2PServerAddress = p2pServerAddr,
+                IdentitySeed = identitySeed,
+                EnableRelay = true
             };
         }
 
@@ -469,13 +519,13 @@ namespace ApeFree.DonateDisk.WinCli
             Console.WriteLine($"  通信协议:        {(options.UseP2P ? "P2P (Libp2p 去中心化点对点)" : "标准 TCP 直连")}");
             if (options.UseP2P)
             {
-                var targetAddr = !string.IsNullOrEmpty(options.P2PRemoteAddress)
-                    ? options.P2PRemoteAddress
-                    : $"/ip4/{options.TargetHost}/tcp/{options.P2PPort}" + (!string.IsNullOrEmpty(options.P2PPeerId) ? $"/p2p/{options.P2PPeerId}" : "");
-                Console.WriteLine($"  目标 Multiaddr:  {targetAddr}");
+                Console.WriteLine($"  P2P 服务端:      {options.P2PServerAddress ?? "未指定"}");
+                if (!string.IsNullOrEmpty(options.TargetPeerId)) Console.WriteLine($"  目标 Master PeerId: {options.TargetPeerId}");
+                if (!string.IsNullOrEmpty(options.P2PRemoteAddress)) Console.WriteLine($"  目标 Multiaddr:  {options.P2PRemoteAddress}");
                 Console.WriteLine($"  Relay 中继穿透:  {(options.EnableRelay ? "已启用" : "未启用")}");
-                Console.WriteLine($"  DHT 节点发现:    {(options.EnableDht ? "已启用" : "未启用")}");
-                Console.WriteLine($"  mDNS 局域网发现: {(options.EnableMdns ? "已启用" : "未启用")}");
+                if (!string.IsNullOrEmpty(options.IdentitySeed)) Console.WriteLine("  固定身份种子:    已配置");
+                if (options.EnableDht) Console.WriteLine("  DHT 节点发现:    已启用");
+                if (options.EnableMdns) Console.WriteLine("  mDNS 局域网发现: 已启用");
                 if (options.EnableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
             }
             else
@@ -523,7 +573,9 @@ namespace ApeFree.DonateDisk.WinCli
             };
 
             var connectTarget = options.UseP2P
-                ? (!string.IsNullOrEmpty(options.P2PRemoteAddress) ? options.P2PRemoteAddress : $"{options.TargetHost}:{options.P2PPort}")
+                ? (!string.IsNullOrEmpty(options.TargetPeerId)
+                    ? $"P2P 服务端 {options.P2PServerAddress} -> Master ({options.TargetPeerId})"
+                    : (!string.IsNullOrEmpty(options.P2PRemoteAddress) ? options.P2PRemoteAddress : options.P2PServerAddress ?? "P2P 网络"))
                 : $"{options.TargetHost}:{options.TargetPort}";
 
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在连接 Master ({connectTarget})...");
@@ -534,7 +586,7 @@ namespace ApeFree.DonateDisk.WinCli
                 if (!success)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [连接失败] 无法连接到 Master 端 ({connectTarget})。请检查 Master 是否已启动或网络端口/地址是否正确。");
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [连接失败] 无法连接到 Master 端 ({connectTarget})。请检查 P2P 服务端是否可达、Master 是否已启动及 PeerId 是否匹配。");
                     Console.ResetColor();
                     return 2;
                 }
@@ -580,10 +632,12 @@ namespace ApeFree.DonateDisk.WinCli
 
             // P2P 专用选项
             bool useP2P = isP2P;
+            string? p2pServerAddr = null;
+            string? targetPeerId = null;
             string? p2pRemoteAddr = null;
-            string? p2pPeerId = null;
-            int p2pPort = 4001;
-            bool enableRelay = false;
+            string? identitySeed = null;
+            int p2pPort = 0;
+            bool enableRelay = true;
             bool enableDht = false;
             bool enableMdns = false;
             bool enableQuic = false;
@@ -617,14 +671,24 @@ namespace ApeFree.DonateDisk.WinCli
                 {
                     useP2P = true;
                 }
+                else if ((arg == "--server" || arg == "--p2p-server") && i + 1 < args.Length)
+                {
+                    p2pServerAddr = args[++i];
+                    useP2P = true;
+                }
+                else if ((arg == "--target-peer" || arg == "--master-peer" || arg == "-peer" || arg == "--peer-id") && i + 1 < args.Length)
+                {
+                    targetPeerId = args[++i];
+                    useP2P = true;
+                }
+                else if (arg == "--seed" && i + 1 < args.Length)
+                {
+                    identitySeed = args[++i];
+                    useP2P = true;
+                }
                 else if ((arg == "-addr" || arg == "--remote-addr") && i + 1 < args.Length)
                 {
                     p2pRemoteAddr = args[++i];
-                    useP2P = true;
-                }
-                else if ((arg == "-peer" || arg == "--peer-id") && i + 1 < args.Length)
-                {
-                    p2pPeerId = args[++i];
                     useP2P = true;
                 }
                 else if (arg == "--p2p-port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var pPort))
@@ -636,6 +700,10 @@ namespace ApeFree.DonateDisk.WinCli
                 else if (arg == "--relay")
                 {
                     enableRelay = true;
+                }
+                else if (arg == "--no-relay")
+                {
+                    enableRelay = false;
                 }
                 else if (arg == "--dht")
                 {
@@ -682,8 +750,10 @@ namespace ApeFree.DonateDisk.WinCli
                 VolumeLabel = label,
                 IsReadOnly = isReadOnly,
                 UseP2P = useP2P,
+                P2PServerAddress = p2pServerAddr,
+                TargetPeerId = targetPeerId,
                 P2PRemoteAddress = p2pRemoteAddr,
-                P2PPeerId = p2pPeerId,
+                IdentitySeed = identitySeed,
                 P2PPort = p2pPort,
                 EnableRelay = enableRelay,
                 EnableDht = enableDht,
@@ -718,39 +788,32 @@ namespace ApeFree.DonateDisk.WinCli
 
             string host = "127.0.0.1";
             int port = 9821;
-            string? p2pRemoteAddr = null;
-            int p2pPort = 4001;
-            bool enableRelay = false;
+            string? p2pServerAddr = null;
+            string? targetPeerId = null;
+            string? identitySeed = null;
 
             if (useP2P)
             {
-                Console.Write("请输入 Master 端 Multiaddr 地址或主机 IP (默认 127.0.0.1): ");
-                var addrInput = Console.ReadLine()?.Trim();
-                if (!string.IsNullOrWhiteSpace(addrInput))
+                Console.Write("请输入 P2P 服务端地址 (例如 1.2.3.4:4001 或 Multiaddr): ");
+                var sInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(sInput))
                 {
-                    if (addrInput.StartsWith("/"))
-                    {
-                        p2pRemoteAddr = addrInput;
-                    }
-                    else
-                    {
-                        host = addrInput;
-                    }
+                    p2pServerAddr = sInput;
                 }
 
-                if (string.IsNullOrWhiteSpace(p2pRemoteAddr))
+                Console.Write("请输入 Master 端的 PeerId (由 Master 启动时生成): ");
+                var peerInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(peerInput))
                 {
-                    Console.Write("请输入 Master 端 P2P 端口号 (默认 4001): ");
-                    var pInput = Console.ReadLine()?.Trim();
-                    if (!string.IsNullOrWhiteSpace(pInput) && int.TryParse(pInput, out var pp))
-                    {
-                        p2pPort = pp;
-                    }
+                    targetPeerId = peerInput;
                 }
 
-                Console.Write("是否启用 Relay 中继进行 NAT 穿透？(y/N): ");
-                var relayInput = Console.ReadLine()?.Trim();
-                enableRelay = string.Equals(relayInput, "y", StringComparison.OrdinalIgnoreCase);
+                Console.Write("请输入固定身份私钥种子 (留空自动生成随机身份): ");
+                var seedInput = Console.ReadLine()?.Trim();
+                if (!string.IsNullOrWhiteSpace(seedInput))
+                {
+                    identitySeed = seedInput;
+                }
             }
             else
             {
@@ -781,10 +844,139 @@ namespace ApeFree.DonateDisk.WinCli
                 VolumeLabel = string.IsNullOrWhiteSpace(labelInput) ? null : labelInput,
                 IsReadOnly = isReadOnly,
                 UseP2P = useP2P,
-                P2PRemoteAddress = p2pRemoteAddr,
-                P2PPort = p2pPort,
-                EnableRelay = enableRelay
+                P2PServerAddress = p2pServerAddr,
+                TargetPeerId = targetPeerId,
+                IdentitySeed = identitySeed,
+                EnableRelay = true
             };
+        }
+
+        #endregion
+
+        #region P2P 服务端运行逻辑
+
+        private static async Task<int> RunP2PServerAsync(string[] args, string appVersion)
+        {
+            Console.Title = $"ApeFree.DonateDisk.WinCli v{appVersion} - [P2P 服务端模式] 引导与中继节点";
+            PrintP2PServerBanner(appVersion);
+
+            string host = "0.0.0.0";
+            int port = 4001;
+            string? seed = null;
+            bool enableQuic = false;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                var arg = args[i].ToLowerInvariant();
+                if ((arg == "-p" || arg == "--port") && i + 1 < args.Length && int.TryParse(args[i + 1], out var p))
+                {
+                    port = p;
+                    i++;
+                }
+                else if ((arg == "-i" || arg == "--ip" || arg == "--host") && i + 1 < args.Length)
+                {
+                    host = args[++i];
+                }
+                else if (arg == "--seed" && i + 1 < args.Length)
+                {
+                    seed = args[++i];
+                }
+                else if (arg == "--quic")
+                {
+                    enableQuic = true;
+                }
+                else if (arg == "--help" || arg == "-?")
+                {
+                    PrintP2PServerHelp();
+                    return 0;
+                }
+            }
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("=================== P2P 服务端配置 ===================");
+            Console.ResetColor();
+            Console.WriteLine($"  程序版本:        v{appVersion}");
+            Console.WriteLine($"  运行模式:        P2P 引导与中继服务端 (Bootstrap & Circuit Relay)");
+            Console.WriteLine($"  监听绑定地址:    {host}:{port}");
+            Console.WriteLine($"  Relay 中继协议:  已启用 (Libp2p Circuit Relay v2)");
+            Console.WriteLine($"  DHT 路由发现:    已启用");
+            if (enableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
+            Console.WriteLine("======================================================");
+            Console.WriteLine();
+
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (s, e) =>
+            {
+                e.Cancel = true;
+                Console.WriteLine("\n[系统] 正在关闭 P2P 服务端...");
+                cts.Cancel();
+            };
+
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.ListenAddress = host;
+            server.Options.TcpPort = port;
+            server.Options.EnableRelay = true;
+            server.Options.EnableDht = true;
+            server.Options.EnableMdns = true;
+            server.Options.EnableQuic = enableQuic;
+
+            if (!string.IsNullOrWhiteSpace(seed))
+            {
+                server.Options.IdentitySeed = P2PAddressHelper.ParseSeed(seed);
+            }
+
+            server.PeerConnected += (s, e) =>
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点连入] 远端 PeerId: {e.Client.RemotePeerId ?? "未知"} 地址: {e.Client.RemoteAddress}");
+                Console.ResetColor();
+            };
+
+            server.PeerDisconnected += (s, e) =>
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点断开] 远端 PeerId: {e.Client.RemotePeerId ?? "未知"} 原因: {e.DisconnectedInfo.ReasonCode}");
+                Console.ResetColor();
+            };
+
+            try
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在启动 P2P 服务端并在 {host}:{port} 监听...");
+                await server.StartAsync();
+
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [P2P 服务端就绪] 本地 PeerId: {server.LocalPeerId}");
+                foreach (var addr in server.ListenAddresses)
+                {
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [监听 Multiaddr] {addr}");
+                }
+                Console.ResetColor();
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] P2P 引导与中继服务正在运行中，按 Ctrl+C 可停止。");
+                Console.ResetColor();
+
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(1000, cts.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] P2P 服务端异常: {ex.Message}");
+                Console.ResetColor();
+                return 1;
+            }
+            finally
+            {
+                await server.CloseAsync();
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] P2P 服务端已关闭。");
+            }
+
+            return 0;
         }
 
         #endregion
@@ -855,6 +1047,23 @@ namespace ApeFree.DonateDisk.WinCli
             Console.ResetColor();
         }
 
+        private static void PrintP2PServerBanner(string version)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine(@"
+    ___               ______                 ____                    __       ____  _      __  
+   /   |  ____  ___  / ____/_______  ___    / __ \____  ____  ____ _/ /____  / __ \(_)____/ /__
+  / /| | / __ \/ _ \/ /_  / ___/ _ \/ _ \  / / / / __ \/ __ \/ __ `/ __/ _ \/ / / / / ___/ //_/
+ / ___ |/ /_/ /  __/ __/ / /  /  __/  __/ / /_/ / /_/ / / / / /_/ / /_/  __/ /_/ / (__  ) ,<   
+/_/  |_/ .___/\___/_/   /_/   \___/\___(_)_____/\____/_/ /_/\__,_/\__/\___/_____/_/____/_/|_|  
+      /_/                                                          DonateDisk (P2P Relay Server) 
+            ");
+            Console.ResetColor();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"               >> ApeFree.DonateDisk.WinCli - P2P 中继与引导服务端 (v{version}) <<\n");
+            Console.ResetColor();
+        }
+
         private static void PrintOverallHelp()
         {
             var version = GetAppVersion();
@@ -862,111 +1071,142 @@ namespace ApeFree.DonateDisk.WinCli
 ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合工具
 
 用法:
-  ApeFree.DonateDisk.WinCli -m [Master选项]   以 Master 挂载服务端模式运行
-  ApeFree.DonateDisk.WinCli -s [Slave选项]    以 Slave 分享客户端模式运行
-  ApeFree.DonateDisk.WinCli                   交互模式引导选择与启动
+  ApeFree.DonateDisk.WinCli -m [Master选项]     以 Master 挂载服务端模式运行
+  ApeFree.DonateDisk.WinCli -s [Slave选项]      以 Slave 分享客户端模式运行
+  ApeFree.DonateDisk.WinCli --p2p-server [选项] 启动独立 P2P 引导与中继服务端
+  ApeFree.DonateDisk.WinCli                     交互模式引导选择与启动
 
 --------------------------------------------------------------------------------
-【Master 服务端模式选项 (-m, --master)】:
-  -i, --ip <IP地址>        本地监听网络地址（默认 0.0.0.0）
-  -p, --port <端口>        本地 TCP 监听端口（默认 9821）
-  -d, --drive <盘符>       首选挂载盘符（默认 Z，若被占用自动向下顺延）
-  --fixed                  挂载为本地固定硬盘（默认挂载为可移动磁盘 RemovableDrive）
+【Master 服务端挂载模式选项 (-m, --master)】:
+  -i, --ip <IP地址>         本地监听网络地址（默认 0.0.0.0，TCP 直连模式）
+  -p, --port <端口>         本地 TCP 监听端口（默认 9821，TCP 直连模式）
+  -d, --drive <盘符>        首选挂载盘符（默认 Z，若被占用自动顺延）
+  --fixed                   挂载为固定硬盘（默认挂载为可移动磁盘 RemovableDrive）
 
   [P2P 专用选项]:
-  -p2p, --p2p              启用 P2P (Libp2p) 去中心化监听模式
-  --p2p-port <端口>        P2P 本地监听端口（默认 4001）
-  --relay                  启用 Relay 中继协议以支持 NAT 穿透
-  --dht                    启用 Kademlia DHT 分布式节点发现
-  --mdns                   启用 mDNS 局域网节点发现
-  --quic                   启用 QUIC 传输协议
-  --bootstrap <Multiaddr>  添加引导节点地址
+  -p2p, --p2p               启用 P2P (Libp2p) 去中心化模式
+  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --seed <种子>             本地身份私钥种子（字符串或十六进制，保持 PeerId 跨重启固定）
+  --target-peer <PeerId>    指定目标 Slave 端的 PeerId（可选）
+  --relay / --no-relay      是否启用 Relay 中继穿透（P2P 模式下默认启用）
+  --dht                     启用 Kademlia DHT 节点发现
+  --mdns                    启用 mDNS 局域网节点发现
+  --quic                    启用 QUIC 传输协议
+  --bootstrap <Multiaddr>   额外添加引导节点地址
 
-示例:
-  ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
-  ApeFree.DonateDisk.WinCli -m -p2p --p2p-port 4001 -d Z
+  示例:
+    # 标准 TCP 直连模式
+    ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
+    # P2P 模式（主动连接至公网 P2P 服务端）
+    ApeFree.DonateDisk.WinCli -m -p2p --server ""1.2.3.4:4001"" -d Z
 
 --------------------------------------------------------------------------------
-【Slave 客户端模式选项 (-s, --slave)】:
-  -h, --host <IP/域名>     Master 端主机 IP 地址（默认 127.0.0.1）
-  -p, --port <端口>        Master 端服务端口（默认 9821）
-  -d, --dir <本地路径>     待分享给 Master 的本地物理文件夹路径（必需）
-  -n, --name <卷标名称>    挂载后显示的虚拟磁盘名称（默认使用目录名）
-  -r, --readonly           以只读保护模式分享（禁止远端修改和删除文件）
+【Slave 客户端分享模式选项 (-s, --slave)】:
+  -h, --host <IP/域名>      Master 端主机 IP 地址（默认 127.0.0.1，TCP 直连模式）
+  -p, --port <端口>         Master 端服务端口（默认 9821，TCP 直连模式）
+  -d, --dir <本地路径>      待分享给 Master 的本地物理文件夹路径（必需）
+  -n, --name <卷标名称>     挂载后显示的虚拟磁盘名称（默认使用目录名）
+  -r, --readonly            以只读保护模式分享（禁止远端修改和删除文件）
 
   [P2P 专用选项]:
-  -p2p, --p2p              启用 P2P (Libp2p) 去中心化点对点通信模式
-  -addr, --remote-addr <地址> 远程 Master 节点的 Multiaddr 地址
-  -peer, --peer-id <PeerId> 目标 Master 节点的 PeerId
-  --p2p-port <端口>        目标 P2P 端口（默认 4001）
-  --relay                  启用 Relay 中继协议以支持 NAT 穿透
-  --dht                    启用 Kademlia DHT 节点发现
-  --mdns                   启用 mDNS 局域网发现
-  --quic                   启用 QUIC 传输协议
-  --bootstrap <Multiaddr>  添加引导节点地址
+  -p2p, --p2p               启用 P2P (Libp2p) 点对点传输模式
+  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --target-peer <PeerId>    目标 Master 端的 PeerId（通过 P2P 服务端中继寻址）
+  --seed <种子>             本地身份私钥种子（保持 PeerId 跨重启固定）
+  -addr, --remote-addr <地址> 目标远端完整的 Multiaddr 地址（若指定则优先使用）
+  --relay / --no-relay      是否启用 Relay 中继穿透（P2P 模式下默认启用）
+  --dht                     启用 Kademlia DHT 发现
+  --mdns                    启用 mDNS 局域网发现
+  --quic                    启用 QUIC 传输
+  --bootstrap <Multiaddr>   额外添加引导节点地址
 
-示例:
-  # 标准 TCP 模式
-  ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
+  示例:
+    # 标准 TCP 模式
+    ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
 
-  # P2P 模式（直接指定 Multiaddress）
-  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" -addr ""/ip4/192.168.1.100/tcp/4001/p2p/12D3KooW...""
+    # P2P 模式（主动连接公网 P2P 服务端并路由至 Master）
+    ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" --server ""1.2.3.4:4001"" --target-peer ""12D3KooWMaster...""
 
-  # P2P 模式（指定主机、端口与 PeerId）
-  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" -h 192.168.1.100 --p2p-port 4001 --peer-id 12D3KooW...
+--------------------------------------------------------------------------------
+【独立 P2P 引导与中继服务端模式 (--p2p-server)】:
+  -p, --port <端口>         监听端口（默认 4001）
+  -i, --ip <IP地址>         监听绑定 IP（默认 0.0.0.0）
+  --seed <种子>             服务端身份私钥种子
+  --quic                    启用 QUIC 协议支持
+
+  示例:
+    ApeFree.DonateDisk.WinCli --p2p-server -p 4001
 ");
         }
 
         private static void PrintMasterHelp()
         {
             Console.WriteLine(@"
-Master 服务端模式选项:
-  -i, --ip <IP地址>        本地监听网络地址（默认 0.0.0.0）
-  -p, --port <端口>        本地 TCP 监听端口（默认 9821）
-  -d, --drive <盘符>       首选挂载盘符（默认 Z，若被占用自动向下顺延）
-  --fixed                  挂载为本地固定硬盘（默认挂载为可移动磁盘 RemovableDrive）
+Master 服务端挂载模式选项:
+  -i, --ip <IP地址>         本地监听网络地址（默认 0.0.0.0，TCP 直连模式）
+  -p, --port <端口>         本地 TCP 监听端口（默认 9821，TCP 直连模式）
+  -d, --drive <盘符>        首选挂载盘符（默认 Z，若被占用自动顺延）
+  --fixed                   挂载为本地固定硬盘（默认挂载为可移动磁盘 RemovableDrive）
 
 P2P 专用选项:
-  -p2p, --p2p              启用 P2P (Libp2p) 监听模式
-  --p2p-port <端口>        P2P 本地监听端口（默认 4001）
-  --relay                  启用 Relay 中继协议
-  --dht                    启用 Kademlia DHT 发现
-  --mdns                   启用 mDNS 局域网发现
-  --quic                   启用 QUIC 传输
-  --bootstrap <Multiaddr>  添加引导节点
-  -?, --help               显示本帮助信息
+  -p2p, --p2p               启用 P2P (Libp2p) 模式
+  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --seed <种子>             本地身份私钥种子（保持 PeerId 跨重启固定）
+  --target-peer <PeerId>    指定目标 Slave 端的 PeerId（可选）
+  --relay / --no-relay      是否启用 Relay 中继穿透（默认启用）
+  --dht                     启用 Kademlia DHT 发现
+  --mdns                    启用 mDNS 局域网发现
+  --quic                    启用 QUIC 传输
+  --bootstrap <Multiaddr>   添加引导节点
+  -?, --help                显示本帮助信息
 
 示例:
   ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
-  ApeFree.DonateDisk.WinCli -m -p2p --p2p-port 4001 -d Z
+  ApeFree.DonateDisk.WinCli -m -p2p --server ""1.2.3.4:4001"" -d Z
 ");
         }
 
         private static void PrintSlaveHelp()
         {
             Console.WriteLine(@"
-Slave 客户端模式选项:
-  -h, --host <IP/域名>     Master 端主机 IP 地址（默认 127.0.0.1）
-  -p, --port <端口>        Master 端服务端口（默认 9821）
-  -d, --dir <本地路径>     待分享给 Master 的本地物理文件夹路径（必需）
-  -n, --name <卷标名称>    挂载后显示的虚拟磁盘名称（默认使用目录名）
-  -r, --readonly           以只读保护模式分享（禁止远端修改和删除文件）
+Slave 客户端分享模式选项:
+  -h, --host <IP/域名>      Master 端主机 IP 地址（默认 127.0.0.1，TCP 直连模式）
+  -p, --port <端口>         Master 端服务端口（默认 9821，TCP 直连模式）
+  -d, --dir <本地路径>      待分享给 Master 的本地物理文件夹路径（必需）
+  -n, --name <卷标名称>     挂载后显示的虚拟磁盘名称（默认使用目录名）
+  -r, --readonly            以只读保护模式分享（禁止远端修改和删除文件）
 
 P2P 专用选项:
-  -p2p, --p2p              启用 P2P (Libp2p) 点对点传输模式
-  -addr, --remote-addr <地址> 目标 Master 的 Multiaddr 地址
-  -peer, --peer-id <PeerId> 目标 Master 的 PeerId
-  --p2p-port <端口>        目标 P2P 端口（默认 4001）
-  --relay                  启用 Relay 中继协议
-  --dht                    启用 Kademlia DHT 发现
-  --mdns                   启用 mDNS 局域网发现
-  --quic                   启用 QUIC 传输
-  --bootstrap <Multiaddr>  添加引导节点
-  -?, --help               显示本帮助信息
+  -p2p, --p2p               启用 P2P (Libp2p) 点对点传输模式
+  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --target-peer <PeerId>    目标 Master 端的 PeerId（通过 P2P 服务端中继连接）
+  --seed <种子>             本地身份私钥种子（保持 PeerId 跨重启固定）
+  -addr, --remote-addr <地址> 目标 Master 的完整 Multiaddr 地址
+  --relay / --no-relay      是否启用 Relay 中继穿透（默认启用）
+  --dht                     启用 Kademlia DHT 发现
+  --mdns                    启用 mDNS 局域网发现
+  --quic                    启用 QUIC 传输
+  --bootstrap <Multiaddr>   添加引导节点
+  -?, --help                显示本帮助信息
 
 示例:
   ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
-  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" -addr ""/ip4/192.168.1.100/tcp/4001/p2p/12D3KooW...""
+  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" --server ""1.2.3.4:4001"" --target-peer ""12D3KooWMaster...""
+");
+        }
+
+        private static void PrintP2PServerHelp()
+        {
+            Console.WriteLine(@"
+独立 P2P 引导与中继服务端模式选项:
+  -p, --port <端口>         监听端口（默认 4001）
+  -i, --ip <IP地址>         监听绑定 IP（默认 0.0.0.0）
+  --seed <种子>             服务端身份私钥种子
+  --quic                    启用 QUIC 协议支持
+  -?, --help                显示本帮助信息
+
+示例:
+  ApeFree.DonateDisk.WinCli --p2p-server -p 4001
 ");
         }
 

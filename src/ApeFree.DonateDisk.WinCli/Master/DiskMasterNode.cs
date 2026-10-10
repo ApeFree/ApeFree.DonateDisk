@@ -106,17 +106,36 @@ namespace ApeFree.DonateDisk.Master
 
             if (_options.UseP2P)
             {
-                // 2. 初始化 P2P 引导节点监听服务
+                // 2. 初始化 P2P 节点并连接指定的 P2P 服务端 (p2p-server)
                 _bootstrapServer = new BootstrapServer();
                 _bootstrapServer.Options.ListenAddress = _options.ListenHost;
-                _bootstrapServer.Options.TcpPort = _options.P2PPort > 0 ? _options.P2PPort : 4001;
+                _bootstrapServer.Options.TcpPort = _options.P2PPort > 0 ? _options.P2PPort : 0;
                 _bootstrapServer.Options.EnableRelay = _options.EnableRelay;
                 _bootstrapServer.Options.EnableDht = _options.EnableDht;
                 _bootstrapServer.Options.EnableMdns = _options.EnableMdns;
                 _bootstrapServer.Options.EnableQuic = _options.EnableQuic;
+
+                if (!string.IsNullOrWhiteSpace(_options.IdentitySeed))
+                {
+                    _bootstrapServer.Options.IdentitySeed = P2PAddressHelper.ParseSeed(_options.IdentitySeed);
+                }
+
+                // 主动连接指定的 P2P 引导与中继服务端
+                if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
+                {
+                    var serverMultiaddr = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
+                    _bootstrapServer.Options.BootstrapPeers.Add(serverMultiaddr);
+                }
+
                 if (_options.BootstrapPeers?.Count > 0)
                 {
-                    _bootstrapServer.Options.BootstrapPeers.AddRange(_options.BootstrapPeers);
+                    foreach (var peer in _options.BootstrapPeers)
+                    {
+                        if (!_bootstrapServer.Options.BootstrapPeers.Contains(peer))
+                        {
+                            _bootstrapServer.Options.BootstrapPeers.Add(peer);
+                        }
+                    }
                 }
 
                 _bootstrapServer.PeerConnected += (s, e) =>
@@ -131,7 +150,7 @@ namespace ApeFree.DonateDisk.Master
                     HandleClientDisconnected(e.Client);
                 };
 
-                await _bootstrapServer.StartAsync();
+                await _bootstrapServer.StartAsync().ConfigureAwait(false);
             }
             else
             {

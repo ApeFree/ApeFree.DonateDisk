@@ -57,6 +57,11 @@ namespace ApeFree.DonateDisk.Slave
         public bool IsConnected => _client != null && _client.IsConnected;
 
         /// <summary>
+        /// 若在 P2P 模式下，获取当前本地节点的 PeerId
+        /// </summary>
+        public string? LocalPeerId => (_client as PeerClient)?.LocalPeerId;
+
+        /// <summary>
         /// 初始化 Slave 节点
         /// </summary>
         /// <param name="options">运行配置项</param>
@@ -100,36 +105,61 @@ namespace ApeFree.DonateDisk.Slave
             if (_options.UseP2P)
             {
                 var peerClient = new PeerClient();
+                peerClient.Options.EnableRelay = _options.EnableRelay;
+                peerClient.Options.EnableDht = _options.EnableDht;
+                peerClient.Options.EnableMdns = _options.EnableMdns;
+                peerClient.Options.EnableQuic = _options.EnableQuic;
 
+                if (!string.IsNullOrWhiteSpace(_options.IdentitySeed))
+                {
+                    peerClient.Options.IdentitySeed = P2PAddressHelper.ParseSeed(_options.IdentitySeed);
+                }
+
+                if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
+                {
+                    peerClient.Options.BootstrapPeers.Add(P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress));
+                }
+
+                if (_options.BootstrapPeers?.Count > 0)
+                {
+                    foreach (var bp in _options.BootstrapPeers)
+                    {
+                        if (!peerClient.Options.BootstrapPeers.Contains(bp))
+                        {
+                            peerClient.Options.BootstrapPeers.Add(bp);
+                        }
+                    }
+                }
+
+                // 确定连接远端节点的 Multiaddr 地址
                 string remoteAddr;
                 if (!string.IsNullOrWhiteSpace(_options.P2PRemoteAddress))
                 {
                     remoteAddr = _options.P2PRemoteAddress;
                 }
-                else
+                else if (!string.IsNullOrWhiteSpace(_options.TargetPeerId))
                 {
-                    var host = string.IsNullOrWhiteSpace(_options.TargetHost) ? "127.0.0.1" : _options.TargetHost;
-                    var port = _options.P2PPort > 0 ? _options.P2PPort : 4001;
-                    if (!string.IsNullOrWhiteSpace(_options.P2PPeerId))
+                    if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                     {
-                        remoteAddr = $"/ip4/{host}/tcp/{port}/p2p/{_options.P2PPeerId}";
+                        remoteAddr = P2PAddressHelper.BuildRelayAddress(_options.P2PServerAddress, _options.TargetPeerId);
                     }
                     else
                     {
-                        remoteAddr = $"/ip4/{host}/tcp/{port}";
+                        remoteAddr = $"/p2p/{_options.TargetPeerId}";
                     }
+                }
+                else if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
+                {
+                    remoteAddr = P2PAddressHelper.ToMultiaddr(_options.P2PServerAddress);
+                }
+                else
+                {
+                    var host = string.IsNullOrWhiteSpace(_options.TargetHost) ? "127.0.0.1" : _options.TargetHost;
+                    var port = _options.TargetPort > 0 ? _options.TargetPort : 4001;
+                    remoteAddr = P2PAddressHelper.ToMultiaddr($"{host}:{port}");
                 }
 
                 peerClient.RemoteAddress = remoteAddr;
-                peerClient.Options.EnableRelay = _options.EnableRelay;
-                peerClient.Options.EnableDht = _options.EnableDht;
-                peerClient.Options.EnableMdns = _options.EnableMdns;
-                peerClient.Options.EnableQuic = _options.EnableQuic;
-                if (_options.BootstrapPeers?.Count > 0)
-                {
-                    peerClient.Options.BootstrapPeers.AddRange(_options.BootstrapPeers);
-                }
-
                 _client = peerClient;
             }
             else
