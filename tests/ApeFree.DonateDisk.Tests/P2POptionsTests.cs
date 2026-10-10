@@ -265,5 +265,80 @@ namespace ApeFree.DonateDisk.Tests
 
             await server.CloseAsync();
         }
+
+        [Fact]
+        public async Task TestServerLocalPeerIdMatchesIdentitySeed()
+        {
+            var seed = "test-fixed-seed";
+            var seedBytes = P2PAddressHelper.ParseSeed(seed);
+            var expectedPeerId = new Nethermind.Libp2p.Core.Identity(seedBytes).PeerId.ToString();
+
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.TcpPort = 4060;
+            server.Options.EnableRelay = false;
+            server.Options.IdentitySeed = seedBytes;
+            await server.StartAsync();
+
+            Assert.Equal(expectedPeerId, server.LocalPeerId);
+            await server.CloseAsync();
+        }
+
+        [Fact]
+        public void TestResolveServerMultiaddr()
+        {
+            var defaultPeerId = P2PAddressHelper.GetPeerIdFromSeed(P2PAddressHelper.DefaultServerSeed);
+            Assert.NotNull(defaultPeerId);
+
+            // 1. 缺省使用默认服务端种子推导
+            var resolvedDefault = P2PAddressHelper.ResolveServerMultiaddr("127.0.0.1:9831");
+            Assert.Equal($"/ip4/127.0.0.1/tcp/9831/p2p/{defaultPeerId}", resolvedDefault);
+
+            // 2. 显式指定 serverPeerId
+            var resolvedWithPeer = P2PAddressHelper.ResolveServerMultiaddr("127.0.0.1:9831", serverPeerId: "12D3KooWCustomPeerId");
+            Assert.Equal("/ip4/127.0.0.1/tcp/9831/p2p/12D3KooWCustomPeerId", resolvedWithPeer);
+
+            // 3. 显式指定 serverSeed
+            var customPeerId = P2PAddressHelper.GetPeerIdFromSeed("MyServerSeed");
+            var resolvedWithSeed = P2PAddressHelper.ResolveServerMultiaddr("127.0.0.1:9831", serverSeed: "MyServerSeed");
+            Assert.Equal($"/ip4/127.0.0.1/tcp/9831/p2p/{customPeerId}", resolvedWithSeed);
+
+            // 4. 地址中内嵌 /p2p/
+            var resolvedEmbedded = P2PAddressHelper.ResolveServerMultiaddr("127.0.0.1:9831/p2p/12D3KooWEmbedded");
+            Assert.Equal("/ip4/127.0.0.1/tcp/9831/p2p/12D3KooWEmbedded", resolvedEmbedded);
+
+            // 5. 完整 Multiaddr 保留原状
+            var fullAddr = "/ip4/117.72.193.36/tcp/9831/p2p/12D3KooWFull";
+            var resolvedFull = P2PAddressHelper.ResolveServerMultiaddr(fullAddr);
+            Assert.Equal(fullAddr, resolvedFull);
+        }
+
+        [Fact]
+        public async Task TestMasterNodeConnectsToBootstrapServerDefaultSeed()
+        {
+            // 启动 P2P 引导节点（模拟 ApeFree.DonateDisk.WinCli --p2p-server -p 4062）
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.ListenAddress = "127.0.0.1";
+            server.Options.TcpPort = 4062;
+            server.Options.EnableRelay = false;
+            server.Options.IdentitySeed = P2PAddressHelper.ParseSeed(P2PAddressHelper.DefaultServerSeed);
+            await server.StartAsync();
+
+            // 启动 Master 节点连接（模拟 ApeFree.DonateDisk.WinCli -m -p2p --server "127.0.0.1:4062" -d Z）
+            var masterOptions = new DiskMasterOptions
+            {
+                UseP2P = true,
+                P2PServerAddress = "127.0.0.1:4062",
+                IdentitySeed = "A123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+                EnableRelay = false
+            };
+
+            using var master = new DiskMasterNode(masterOptions);
+            await master.StartAsync();
+
+            Assert.True(master.IsListening);
+            Assert.NotNull(master.P2PLocalPeerId);
+
+            await server.CloseAsync();
+        }
     }
 }
