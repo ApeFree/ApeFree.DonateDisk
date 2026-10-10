@@ -29,7 +29,7 @@ namespace ApeFree.DonateDisk.WinSlave
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=================== 运行配置 ===================");
             Console.ResetColor();
-            Console.WriteLine($"  Master 主机:      {options.TargetHost}:{options.TargetPort}");
+            Console.WriteLine($"  Master 主机:     {options.TargetHost}:{options.TargetPort}");
             Console.WriteLine($"  分享物理目录:    {options.LocalDirectory}");
             Console.WriteLine($"  卷标显示名称:    {options.VolumeLabel ?? Path.GetFileName(options.LocalDirectory.TrimEnd('\\', '/'))}");
             Console.WriteLine($"  只读保护模式:    {(options.IsReadOnly ? "已开启 [只读]" : "已关闭 [可读写]")}");
@@ -49,14 +49,14 @@ namespace ApeFree.DonateDisk.WinSlave
             slaveNode.Connected += (s, e) =>
             {
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [✓ 已连接] 成功连入 Master 端并就绪发布磁盘服务！");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [已连接] 成功连入 Master 端并就绪发布磁盘服务！");
                 Console.ResetColor();
             };
 
             slaveNode.Disconnected += (s, e) =>
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [! 已断开] 与 Master 端的网络连接已中断，本地句柄已自动清理。");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [已断开] 与 Master 端的网络连接已中断，本地句柄已自动清理。");
                 Console.ResetColor();
             };
 
@@ -78,7 +78,7 @@ namespace ApeFree.DonateDisk.WinSlave
                 if (!success)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [× 连接失败] 无法连接到 Master 端 ({options.TargetHost}:{options.TargetPort})。请检查 Master 是否已启动或网络端口是否通畅。");
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [连接失败] 无法连接到 Master 端 ({options.TargetHost}:{options.TargetPort})。请检查 Master 是否已启动或网络端口是否通畅。");
                     Console.ResetColor();
                     return 2;
                 }
@@ -117,12 +117,13 @@ namespace ApeFree.DonateDisk.WinSlave
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine(@"
-    ___              ______              ___                 __      ___       __  
-   /   |  ____  ___ / ____/_______  ___ /   |  ____  ____   / /___  /   | ____/ /__
-  / /| | / __ \/ _ \ /_  / ___/ _ \/ _ \ /| | / __ \/ __ \ / / __ \/ /| |/ __  / _ \
- / ___ |/ /_/ /  __/ __// /  /  __/  __/ ___ |/ /_/ / /_/ // / /_/ / ___ / /_/ /  __/
-/_/  |_/ .___/\___/_/  /_/   \___/\___/_/  |_/ .___/\____//_/\____/_/  |_\__,_/\___/ 
-      /_/                                   /_/       DonateDisk (Slave Node)      
+    ___               ______                 ____                    __       ____  _      __  
+   /   |  ____  ___  / ____/_______  ___    / __ \____  ____  ____ _/ /____  / __ \(_)____/ /__
+  / /| | / __ \/ _ \/ /_  / ___/ _ \/ _ \  / / / / __ \/ __ \/ __ `/ __/ _ \/ / / / / ___/ //_/
+ / ___ |/ /_/ /  __/ __/ / /  /  __/  __/ / /_/ / /_/ / / / / /_/ / /_/  __/ /_/ / (__  ) ,<   
+/_/  |_/ .___/\___/_/   /_/   \___/\___(_)_____/\____/_/ /_/\__,_/\__/\___/_____/_/____/_/|_|  
+      /_/                                                             DonateDisk (Slave Node) 
+
             ");
             Console.ResetColor();
         }

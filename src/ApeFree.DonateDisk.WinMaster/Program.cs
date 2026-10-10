@@ -52,7 +52,7 @@ namespace ApeFree.DonateDisk.WinMaster
             masterNode.SlaveMounted += (s, session) =>
             {
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [✓ 磁盘已挂载] 盘符 [{session.MountPoint}] 就绪！");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [磁盘已挂载] 盘符 [{session.MountPoint}] 就绪！");
                 Console.ResetColor();
                 Console.WriteLine($"           - 客户端来源: {session.Client}");
                 Console.WriteLine($"           - 卷标名称:   {session.VolumeInfo.VolumeLabel}");
@@ -63,7 +63,7 @@ namespace ApeFree.DonateDisk.WinMaster
             masterNode.SlaveUnmounted += (s, session) =>
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [! 磁盘已卸载] 客户端断开连接，盘符 [{session.MountPoint}] 已自动安全卸载并释放。");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [磁盘已卸载] 客户端断开连接，盘符 [{session.MountPoint}] 已自动安全卸载并释放。");
                 Console.ResetColor();
                 Console.WriteLine();
             };
@@ -148,12 +148,13 @@ namespace ApeFree.DonateDisk.WinMaster
         {
             Console.ForegroundColor = ConsoleColor.Magenta;
             Console.WriteLine(@"
-    ___              ______              ___                 __      ___       __  
-   /   |  ____  ___ / ____/_______  ___ /   |  ____  ____   / /___  /   | ____/ /__
-  / /| | / __ \/ _ \ /_  / ___/ _ \/ _ \ /| | / __ \/ __ \ / / __ \/ /| |/ __  / _ \
- / ___ |/ /_/ /  __/ __// /  /  __/  __/ ___ |/ /_/ / /_/ // / /_/ / ___ / /_/ /  __/
-/_/  |_/ .___/\___/_/  /_/   \___/\___/_/  |_/ .___/\____//_/\____/_/  |_\__,_/\___/ 
-      /_/                                   /_/       DonateDisk (Master Node)     
+    ___               ______                 ____                    __       ____  _      __  
+   /   |  ____  ___  / ____/_______  ___    / __ \____  ____  ____ _/ /____  / __ \(_)____/ /__
+  / /| | / __ \/ _ \/ /_  / ___/ _ \/ _ \  / / / / __ \/ __ \/ __ `/ __/ _ \/ / / / / ___/ //_/
+ / ___ |/ /_/ /  __/ __/ / /  /  __/  __/ / /_/ / /_/ / / / / /_/ / /_/  __/ /_/ / (__  ) ,<   
+/_/  |_/ .___/\___/_/   /_/   \___/\___(_)_____/\____/_/ /_/\__,_/\__/\___/_____/_/____/_/|_|  
+      /_/                                                             DonateDisk (Master Node) 
+ 
             ");
             Console.ResetColor();
         }
