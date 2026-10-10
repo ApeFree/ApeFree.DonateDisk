@@ -7,13 +7,13 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
 
-    <Title>ApeFree.DonateDisk.WinSlave</Title>
-    <Product>ApeFree.DonateDisk.WinSlave</Product>
+    <Title>ApeFree.DonateDisk.WinCli</Title>
+    <Product>ApeFree.DonateDisk.WinCli</Product>
     <Version>0.0.1.1-alpha61010</Version>
     <Authors>Guijie Lee</Authors>
     <Company>ApeFree</Company>
     <Copyright>Copyright © 2022-2026 ApeFree, All Rights Reserved.</Copyright>
-    <Description>ApeFree.DonateDisk 远程磁盘分享客户端命令行工具</Description>
+    <Description>ApeFree.DonateDisk 命令行综合工具 (支持 Master 服务端挂载与 Slave 客户端分享)</Description>
 
     <!-- 单文件与修剪打包配置 -->
     <PublishSingleFile>true</PublishSingleFile>
@@ -29,15 +29,21 @@
     <ProjectReference Include="..\ApeFree.DonateDisk\ApeFree.DonateDisk.csproj" />
   </ItemGroup>
 
-  <!-- 修剪保护：避免 RPC 反射调度与数据契约 DTO 在修剪时被意外剥离 -->
+  <ItemGroup>
+    <PackageReference Include="ApeFree.ApeRpc.BytesIO" Version="0.0.3-alpha61009" />
+    <PackageReference Include="DokanNet" Version="2.3.0.3" />
+  </ItemGroup>
+
+  <!-- 修剪保护：避免 RPC 反射调度、数据契约 DTO 及 DokanNet 原生桥接在修剪时被意外剥离 -->
   <ItemGroup>
     <TrimmerRootAssembly Include="ApeFree.DonateDisk" />
-    <TrimmerRootAssembly Include="ApeFree.DonateDisk.WinSlave" />
+    <TrimmerRootAssembly Include="ApeFree.DonateDisk.WinCli" />
     <TrimmerRootAssembly Include="ApeFree.ApeRpc" />
     <TrimmerRootAssembly Include="ApeFree.ApeRpc.BytesIO" />
     <TrimmerRootAssembly Include="STTech.BytesIO" />
     <TrimmerRootAssembly Include="STTech.CodePlus" />
     <TrimmerRootAssembly Include="ApeFree.Protocols.Json" />
+    <TrimmerRootAssembly Include="DokanNet" />
   </ItemGroup>
 
 </Project>

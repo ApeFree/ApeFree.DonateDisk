@@ -1,7 +1,7 @@
 # ApeFree.DonateDisk
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![.NET 10.0](https://img.shields.io/badge/.NET-10.0--windows-purple.svg)](https://dotnet.microsoft.com/)
+[![.NET 10.0](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 
 ## 1. 项目简介 (Introduction)
 
@@ -19,7 +19,8 @@
 
 * **全双工直连 RPC**：底层基于 `ApeFree.ApeRpc.BytesIO` 与 `STTech.BytesIO`，网络连接由 Slave 主动连出，但应用层由 Master 驱动读取/写入 Slave，天然穿透 NAT/防火墙。
 * **原生盘符无感访问**：基于 Dokany 内核级驱动拦截，挂载为 Windows 标准驱动器盘符（如 `Z:\`），完美兼容 Windows 资源管理器、PowerShell、CMD 及各类桌面软件。
-* **Slave 端纯托管免驱动**：**仅 Master 端需安装 Dokany 驱动**；Slave 端为纯 .NET 托管程序，无需安装任何内核驱动，绿色随拷随用。
+* **轻量纯契约核心库**：核心库 `ApeFree.DonateDisk` 为纯契约接口与 DTO 模型（跨平台 .NET 10），不依赖 Dokany；仅 `WinCli` 终端按需依赖 DokanNet。
+* **单文件修剪可执行程序**：`ApeFree.DonateDisk.WinCli` 提供合二为一的轻量可执行程序，支持命令行参数（`-m` / `-s`）与交互式模式快速切换。
 * **流式分块高吞吐**：文件读写原生采用分块 I/O（Chunked I/O），配合高效二进制协议帧，低内存占用且支持大文件高速传输。
 * **路径安全沙箱**：Slave 端内置 `SafePathResolver`，严格隔离目录穿越（Directory Traversal）攻击，支持一键只读保护（`--readonly`）。
 * **自动化生命周期**：多 Slave 动态并发支持；自动探测并倒序分配空闲可用盘符（Z -> D）；Slave 离线或断开时自动安全卸载并释放盘符。
@@ -51,14 +52,13 @@
 
 ---
 
-## 4. 子工程组成 (Projects)
+## 4. 工程组成 (Projects)
 
 | 工程 | 说明 | 运行形态 |
 | :--- | :--- | :--- |
-| **`ApeFree.DonateDisk`** | 核心类库，提供 Slave 端服务契约实现与 Master 端 Dokan 桥接挂载 | 类库 (net10.0-windows) |
-| **`ApeFree.DonateDisk.WinSlave`** | 命令行客户端，指定 Master IP、端口与本地待分享物理目录 | 控制台 EXE (net10.0-windows) |
-| **`ApeFree.DonateDisk.WinMaster`** | 命令行服务端，监听端口并自动将 Slave 分享的磁盘挂载到本地盘符 | 控制台 EXE (net10.0-windows) |
-| **`ApeFree.DonateDisk.Tests`** | 单元与端到端集成测试套件 | xUnit 测试工程 (net10.0-windows) |
+| **`ApeFree.DonateDisk`** | 纯契约接口核心库，定义远程虚拟磁盘 RPC 契约、事件及 DTO 数据模型 | 跨平台类库 (`net10.0`) |
+| **`ApeFree.DonateDisk.WinCli`** | 综合命令行终端，内置 Master 挂载端与 Slave 分享端完整实现及 DokanNet 驱动适配 | 单文件修剪控制台 EXE (`net10.0-windows`) |
+| **`ApeFree.DonateDisk.Tests`** | 完整单元与端到端集成测试套件 | xUnit 测试工程 (`net10.0-windows`) |
 
 ---
 
@@ -72,21 +72,34 @@
 ### 5.2 启动 Master 端 (挂载监听)
 在 Master 机器上执行：
 ```bash
-# 启动服务端并监听 9821 端口，默认首选盘符为 Z:
-ApeFree.DonateDisk.WinMaster.exe -p 9821 -d Z
+# 以 Master 服务端模式运行，监听 9821 端口，默认首选盘符为 Z:
+ApeFree.DonateDisk.WinCli.exe -m -p 9821 -d Z
+
+# 或指定监听 IP（例如绑定局域网网卡）：
+ApeFree.DonateDisk.WinCli.exe -m -i 192.168.1.100 -p 9821 -d Z
 ```
 
 ### 5.3 启动 Slave 端 (主动捐赠)
 在 Slave 机器上执行：
 ```bash
-# 将本地 D:\MyProjects 目录主动分享给 Master
-ApeFree.DonateDisk.WinSlave.exe -h 192.168.1.100 -p 9821 -d "D:\MyProjects" -n "ProjectDisk"
+# 以 Slave 客户端模式运行，将本地 D:\MyProjects 目录主动分享给 Master
+ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\MyProjects" -n "ProjectDisk"
 
 # 若仅允许 Master 读取、禁止修改或删除，可开启只读保护：
-ApeFree.DonateDisk.WinSlave.exe -h 192.168.1.100 -p 9821 -d "D:\PublicDocs" -r
+ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\PublicDocs" -r
 ```
 
-### 5.4 访问虚拟磁盘
+### 5.4 交互模式
+直接双击或不带参数运行 `ApeFree.DonateDisk.WinCli.exe` 即可进入交互式向导：
+```text
+=================== 请选择运行模式 ===================
+  [1] Master 挂载服务端 - 监听网络并自动挂载远程 Slave 捐赠的磁盘
+  [2] Slave  分享客户端 - 主动将本地目录分享给 Master 挂载使用
+======================================================
+请输入选项 [1/2] (默认 1):
+```
+
+### 5.5 访问虚拟磁盘
 Master 端控制台将实时提示盘符就绪：
 ```text
 [✓ 磁盘已挂载] 盘符 [Z:\] 就绪！
@@ -98,6 +111,18 @@ Master 端控制台将实时提示盘符就绪：
 
 ---
 
-## 6. 开源许可证 (License)
+## 6. 构建与打包 (Build & Release)
+
+项目根目录下提供了自动化一键构建与打包脚本：
+```powershell
+.\build-release.ps1
+```
+脚本将自动在 `Install/` 目录中生成：
+- **`ApeFree.DonateDisk.<Version>.nupkg`**：核心契约库的 NuGet 发布包；
+- **`ApeFree.DonateDisk.WinCli.exe`**：修剪压缩后的单文件免安装可执行程序。
+
+---
+
+## 7. 开源许可证 (License)
 
 本项目采用 [Apache-2.0](LICENSE) 许可证开源。

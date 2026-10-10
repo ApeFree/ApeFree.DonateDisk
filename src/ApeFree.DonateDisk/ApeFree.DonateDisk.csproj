@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -12,7 +12,7 @@
     <Authors>Guijie Lee</Authors>
     <Company>ApeFree</Company>
     <Copyright>Copyright © 2022-2026 ApeFree, All Rights Reserved.</Copyright>
-    <Description>远程主动捐赠式虚拟磁盘挂载核心库。支持 Slave 端将本地目录通过全双工 ApeRpc 主动分享，Master 端通过 Dokany 驱动自动挂载为 Windows 原生磁盘盘符。</Description>
+    <Description>远程主动捐赠式虚拟磁盘契约核心库。定义虚拟磁盘 RPC 操作接口、文件变动事件及传输数据契约模型。</Description>
 
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -27,8 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="ApeFree.ApeRpc.BytesIO" Version="0.0.3-alpha61009" />
-    <PackageReference Include="DokanNet" Version="2.3.0.3" />
+    <PackageReference Include="ApeFree.ApeRpc" Version="0.0.3-alpha61009" />
   </ItemGroup>
 
 </Project>
