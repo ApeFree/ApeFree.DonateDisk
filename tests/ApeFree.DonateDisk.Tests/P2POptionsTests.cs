@@ -516,5 +516,67 @@ namespace ApeFree.DonateDisk.Tests
                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             }
         }
+
+        [Fact]
+        public void P2PRelayManager_RegisterAndUnregister_HandlesLifecycleCorrectly()
+        {
+            using var relay = new P2PRelayManager();
+            Assert.Equal(0, relay.ActivePeerCount);
+
+            using var client1 = new STTech.BytesIO.P2P.PeerClient();
+            using var client2 = new STTech.BytesIO.P2P.PeerClient();
+
+            int changedCount = 0;
+            relay.ActivePeerCountChanged += (s, count) => changedCount = count;
+
+            relay.RegisterClient(client1);
+            Assert.Equal(1, relay.ActivePeerCount);
+            Assert.Equal(1, changedCount);
+
+            relay.RegisterClient(client2);
+            Assert.Equal(2, relay.ActivePeerCount);
+            Assert.Equal(2, changedCount);
+
+            // 模拟 client2 断开注销
+            relay.UnregisterClient(client2);
+            Assert.Equal(1, relay.ActivePeerCount);
+            Assert.Equal(1, changedCount);
+
+            // 模拟 client2 重连后再次注册
+            relay.RegisterClient(client2);
+            Assert.Equal(2, relay.ActivePeerCount);
+            Assert.Equal(2, changedCount);
+
+            // 释放管理器
+            relay.Dispose();
+            Assert.Equal(0, relay.ActivePeerCount);
+        }
+
+        [Fact]
+        public void DiskSlaveNode_ReconnectConfiguration_HasCorrectDefaults()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "slave_reconnect_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                var options = new DiskSlaveOptions
+                {
+                    UseP2P = true,
+                    P2PServerAddress = "127.0.0.1:4099",
+                    LocalDirectory = tempDir
+                };
+
+                using var slave = new DiskSlaveNode(options);
+                Assert.Equal(3000, slave.ReconnectInterval);
+
+                slave.ReconnectInterval = 1500;
+                Assert.Equal(1500, slave.ReconnectInterval);
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
     }
 }
