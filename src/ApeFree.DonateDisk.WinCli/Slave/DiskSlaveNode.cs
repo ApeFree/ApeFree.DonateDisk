@@ -165,7 +165,7 @@ namespace ApeFree.DonateDisk.Slave
                 else
                 {
                     var host = string.IsNullOrWhiteSpace(_options.TargetHost) ? "127.0.0.1" : _options.TargetHost;
-                    var port = _options.TargetPort > 0 ? _options.TargetPort : 4001;
+                    var port = _options.TargetPort > 0 ? _options.TargetPort : 9831;
                     remoteAddr = P2PAddressHelper.ToMultiaddr($"{host}:{port}");
                 }
 

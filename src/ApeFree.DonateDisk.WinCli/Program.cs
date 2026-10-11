@@ -448,7 +448,7 @@ namespace ApeFree.DonateDisk.WinCli
 
             if (useP2P)
             {
-                Console.Write("请输入 P2P 服务端地址 (例如 1.2.3.4:4001，留空仅在本地网络运行): ");
+                Console.Write("请输入 P2P 服务端地址 (例如 127.0.0.1:9831，留空仅在本地网络运行): ");
                 var sInput = Console.ReadLine()?.Trim();
                 if (!string.IsNullOrWhiteSpace(sInput))
                 {
@@ -847,7 +847,7 @@ namespace ApeFree.DonateDisk.WinCli
 
             if (useP2P)
             {
-                Console.Write("请输入 P2P 服务端地址 (例如 1.2.3.4:4001 或 Multiaddr): ");
+                Console.Write("请输入 P2P 服务端地址 (例如 127.0.0.1:9831 或 Multiaddr): ");
                 var sInput = Console.ReadLine()?.Trim();
                 if (!string.IsNullOrWhiteSpace(sInput))
                 {
@@ -914,7 +914,7 @@ namespace ApeFree.DonateDisk.WinCli
             PrintP2PServerBanner(appVersion);
 
             string host = "0.0.0.0";
-            int port = 4001;
+            int port = 9831;
             string? seed = null;
             bool enableQuic = false;
 
@@ -1169,7 +1169,7 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
 
   [P2P 专用选项]:
   -p2p, --p2p               启用 P2P (Libp2p) 去中心化模式
-  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --server, --p2p-server <地址> P2P 服务端地址（例如 127.0.0.1:9831 或 Multiaddr）
   --server-peer <PeerId>    指定 P2P 服务端的 PeerId（可选）
   --server-seed <种子>      指定 P2P 服务端的凭据种子（可选）
   --seed <种子>             本地身份私钥种子（字符串或十六进制，保持 PeerId 跨重启固定）
@@ -1183,10 +1183,10 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
     示例:
     # 标准 TCP 直连模式
     ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
-    # P2P 模式（主动连接至公网 P2P 服务端）
-    ApeFree.DonateDisk.WinCli -m -p2p --server ""1.2.3.4:4001"" -d Z
-    # P2P 模式（指定固定种子身份）
-    ApeFree.DonateDisk.WinCli -m -p2p --server ""1.2.3.4:4001"" --seed ""MySecretKey"" -d Z
+    # P2P 模式（建议写法：连接公网 P2P 服务端，使用内置种子）
+    ApeFree.DonateDisk.WinCli -m -p2p --server ""127.0.0.1:9831"" -d Z
+    # P2P 模式（可选写法：指定自定义私有凭据种子）
+    ApeFree.DonateDisk.WinCli -m -p2p --server ""127.0.0.1:9831"" --seed ""MySecretKey"" -d Z
 
 --------------------------------------------------------------------------------
 【Slave 客户端分享模式选项 (-s, --slave)】:
@@ -1198,7 +1198,7 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
 
   [P2P 专用选项]:
   -p2p, --p2p               启用 P2P (Libp2p) 点对点传输模式
-  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --server, --p2p-server <地址> P2P 服务端地址（例如 127.0.0.1:9831 或 Multiaddr）
   --server-peer <PeerId>    指定 P2P 服务端的 PeerId（可选）
   --server-seed <种子>      指定 P2P 服务端的凭据种子（可选）
   --target-peer <PeerId>    目标 Master 端的 PeerId（通过 P2P 服务端中继寻址）
@@ -1213,22 +1213,22 @@ ApeFree.DonateDisk.WinCli (v{version}) - 远程虚拟磁盘挂载与分享综合
 
   示例:
     # 标准 TCP 模式
-    ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
+    ApeFree.DonateDisk.WinCli -s -h 127.0.0.1 -p 9821 -d ""C:\Test"" -n ""Test""
 
-    # P2P 模式（主动连接公网 P2P 服务端并路由至 Master）
-    ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" --server ""1.2.3.4:4001"" --target-peer ""12D3KooWMaster...""
-    # P2P 模式（基于 Master 种子自动路由）
-    ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" --server ""1.2.3.4:4001"" --master-seed ""MySecretKey""
+    # P2P 模式（建议写法：连接公网 P2P 服务端，使用内置种子）
+    ApeFree.DonateDisk.WinCli -s -p2p --server ""127.0.0.1:9831"" -d ""C:\Test""
+    # P2P 模式（可选写法：指定自定义私有凭据种子）
+    ApeFree.DonateDisk.WinCli -s -p2p --server ""127.0.0.1:9831"" --seed ""MySecretKey"" -d ""C:\Test""
 
 --------------------------------------------------------------------------------
 【独立 P2P 引导与中继服务端模式 (--p2p-server)】:
-  -p, --port <端口>         监听端口（默认 4001）
+  -p, --port <端口>         监听端口（默认 9831）
   -i, --ip <IP地址>         监听绑定 IP（默认 0.0.0.0）
-  --seed <种子>             服务端身份私钥种子
+  --seed <种子>             服务端身份私钥种子（可选，留空使用内置默认种子）
   --quic                    启用 QUIC 协议支持
 
   示例:
-    ApeFree.DonateDisk.WinCli --p2p-server -p 4001
+    ApeFree.DonateDisk.WinCli --p2p-server -p 9831
 ");
         }
 
@@ -1243,7 +1243,7 @@ Master 服务端挂载模式选项:
 
 P2P 专用选项:
   -p2p, --p2p               启用 P2P (Libp2p) 模式
-  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --server, --p2p-server <地址> P2P 服务端地址（例如 127.0.0.1:9831 或 Multiaddr）
   --server-peer <PeerId>    指定 P2P 服务端的 PeerId（可选）
   --server-seed <种子>      指定 P2P 服务端的凭据种子（可选）
   --seed <种子>             本地身份私钥种子（保持 PeerId 跨重启固定）
@@ -1257,8 +1257,8 @@ P2P 专用选项:
 
 示例:
   ApeFree.DonateDisk.WinCli -m -p 9821 -d Z
-  ApeFree.DonateDisk.WinCli -m -p2p --server ""1.2.3.4:4001"" -d Z
-  ApeFree.DonateDisk.WinCli -m -p2p --server ""1.2.3.4:4001"" --seed ""MySecretKey"" -d Z
+  ApeFree.DonateDisk.WinCli -m -p2p --server ""127.0.0.1:9831"" -d Z
+  ApeFree.DonateDisk.WinCli -m -p2p --server ""127.0.0.1:9831"" --seed ""MySecretKey"" -d Z
 ");
         }
 
@@ -1274,7 +1274,7 @@ Slave 客户端分享模式选项:
 
 P2P 专用选项:
   -p2p, --p2p               启用 P2P (Libp2p) 点对点传输模式
-  --server, --p2p-server <地址> P2P 服务端地址（例如 1.2.3.4:4001 或 Multiaddr）
+  --server, --p2p-server <地址> P2P 服务端地址（例如 127.0.0.1:9831 或 Multiaddr）
   --server-peer <PeerId>    指定 P2P 服务端的 PeerId（可选）
   --server-seed <种子>      指定 P2P 服务端的凭据种子（可选）
   --target-peer <PeerId>    目标 Master 端的 PeerId（通过 P2P 服务端中继连接）
@@ -1289,9 +1289,9 @@ P2P 专用选项:
   -?, --help                显示本帮助信息
 
 示例:
-  ApeFree.DonateDisk.WinCli -s -d ""D:\SharedData"" -h 192.168.1.100 -p 9821
-  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" --server ""1.2.3.4:4001"" --target-peer ""12D3KooWMaster...""
-  ApeFree.DonateDisk.WinCli -s -p2p -d ""D:\SharedData"" --server ""1.2.3.4:4001"" --master-seed ""MySecretKey""
+  ApeFree.DonateDisk.WinCli -s -h 127.0.0.1 -p 9821 -d ""C:\Test"" -n ""Test""
+  ApeFree.DonateDisk.WinCli -s -p2p --server ""127.0.0.1:9831"" -d ""C:\Test""
+  ApeFree.DonateDisk.WinCli -s -p2p --server ""127.0.0.1:9831"" --seed ""MySecretKey"" -d ""C:\Test""
 ");
         }
 
@@ -1299,14 +1299,14 @@ P2P 专用选项:
         {
             Console.WriteLine(@"
 独立 P2P 引导与中继服务端模式选项:
-  -p, --port <端口>         监听端口（默认 4001）
+  -p, --port <端口>         监听端口（默认 9831）
   -i, --ip <IP地址>         监听绑定 IP（默认 0.0.0.0）
-  --seed <种子>             服务端身份私钥种子
+  --seed <种子>             服务端身份私钥种子（可选，留空使用内置默认种子）
   --quic                    启用 QUIC 协议支持
   -?, --help                显示本帮助信息
 
 示例:
-  ApeFree.DonateDisk.WinCli --p2p-server -p 4001
+  ApeFree.DonateDisk.WinCli --p2p-server -p 9831
 ");
         }
 

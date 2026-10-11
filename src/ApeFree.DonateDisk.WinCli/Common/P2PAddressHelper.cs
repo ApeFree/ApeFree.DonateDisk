@@ -30,7 +30,7 @@ namespace ApeFree.DonateDisk.Common
         /// <summary>
         /// 解析 P2P 服务端 Multiaddr 地址，确保包含合法的 PeerId
         /// </summary>
-        /// <param name="serverAddress">服务端地址（支持 1.2.3.4:4001, /ip4/..., 1.2.3.4:4001/p2p/...）</param>
+        /// <param name="serverAddress">服务端地址（支持 127.0.0.1:9831, /ip4/..., 127.0.0.1:9831/p2p/...）</param>
         /// <param name="serverPeerId">指定的 PeerId（可选）</param>
         /// <param name="serverSeed">指定的服务端种子（可选）</param>
         /// <returns>包含 /p2p/ 的完整 Multiaddr</returns>
@@ -68,11 +68,11 @@ namespace ApeFree.DonateDisk.Common
         /// <summary>
         /// 将常见的 IP/域名/端口格式转换为 Libp2p 标准 Multiaddr 格式
         /// </summary>
-        /// <param name="address">输入地址（例如 1.2.3.4:4001, 1.2.3.4:4001/p2p/Qm..., /ip4/1.2.3.4/tcp/4001）</param>
+        /// <param name="address">输入地址（例如 127.0.0.1:9831, 127.0.0.1:9831/p2p/Qm..., /ip4/127.0.0.1/tcp/9831）</param>
         /// <param name="peerId">可选的目标 PeerId</param>
         /// <param name="defaultPort">若未指定端口时的缺省端口号</param>
         /// <returns>标准的 Multiaddr 字符串</returns>
-        public static string ToMultiaddr(string address, string? peerId = null, int defaultPort = 4001)
+        public static string ToMultiaddr(string address, string? peerId = null, int defaultPort = 9831)
         {
             if (string.IsNullOrWhiteSpace(address))
             {

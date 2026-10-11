@@ -38,7 +38,7 @@ namespace ApeFree.DonateDisk.Master
         public bool UseP2P { get; set; }
 
         /// <summary>
-        /// P2P 引导与中继服务端地址（例如 1.2.3.4:4001 或 /ip4/1.2.3.4/tcp/4001/p2p/QmServer...）
+        /// P2P 引导与中继服务端地址（例如 127.0.0.1:9831 或 /ip4/127.0.0.1/tcp/9831/p2p/QmServer...）
         /// </summary>
         public string? P2PServerAddress { get; set; }
 

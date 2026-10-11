@@ -173,7 +173,7 @@ namespace ApeFree.DonateDisk.Master
                     // 2b. 作为本地 P2P 服务端监听
                     _bootstrapServer = new BootstrapServer();
                     _bootstrapServer.Options.ListenAddress = _options.ListenHost;
-                    _bootstrapServer.Options.TcpPort = _options.P2PPort > 0 ? _options.P2PPort : 4001;
+                    _bootstrapServer.Options.TcpPort = _options.P2PPort > 0 ? _options.P2PPort : 9831;
                     _bootstrapServer.Options.EnableRelay = _options.EnableRelay;
                     _bootstrapServer.Options.EnableDht = _options.EnableDht;
                     _bootstrapServer.Options.EnableMdns = _options.EnableMdns;
