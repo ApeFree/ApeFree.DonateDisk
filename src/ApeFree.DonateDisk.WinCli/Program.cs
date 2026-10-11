@@ -230,6 +230,16 @@ namespace ApeFree.DonateDisk.WinCli
 
                 if (options.UseP2P)
                 {
+                    if (!string.IsNullOrEmpty(options.P2PServerAddress) && !masterNode.IsListening)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        var errDetail = masterNode.LastConnectResult?.Exception != null
+                            ? $" 原因: {masterNode.LastConnectResult.Exception.Message}"
+                            : (masterNode.LastConnectResult != null ? $" 错误码: {masterNode.LastConnectResult.ErrorCode}" : string.Empty);
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [等待连接] 暂未连上 P2P 服务端 ({options.P2PServerAddress}){errDetail}，已启动自动重连机制 (每 3 秒无限重试)...");
+                        Console.ResetColor();
+                    }
+
                     Console.ForegroundColor = ConsoleColor.Cyan;
                     if (!string.IsNullOrEmpty(masterNode.P2PLocalPeerId))
                     {
@@ -603,18 +613,19 @@ namespace ApeFree.DonateDisk.WinCli
                 var success = await slaveNode.StartAsync(cts.Token);
                 if (!success)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.ForegroundColor = ConsoleColor.Yellow;
                     var errDetail = slaveNode.LastConnectResult?.Exception != null
                         ? $" 原因: {slaveNode.LastConnectResult.Exception.Message}"
                         : (slaveNode.LastConnectResult != null ? $" 错误码: {slaveNode.LastConnectResult.ErrorCode}" : string.Empty);
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [连接失败] 无法连接到 Master 端 ({connectTarget})。{errDetail}");
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [等待连接] 暂未连上 Master 端 ({connectTarget}){errDetail}，已启动自动重连机制 (每 3 秒无限重试，按 Ctrl+C 可停止)...");
                     Console.ResetColor();
-                    return 2;
                 }
-
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 磁盘捐赠已启动！按 Ctrl+C 可停止分享并安全退出。");
-                Console.ResetColor();
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 磁盘捐赠已启动！按 Ctrl+C 可停止分享并安全退出。");
+                    Console.ResetColor();
+                }
 
                 while (!cts.Token.IsCancellationRequested)
                 {
@@ -967,68 +978,39 @@ namespace ApeFree.DonateDisk.WinCli
             string effectiveSeed = !string.IsNullOrWhiteSpace(seed) ? seed : P2PAddressHelper.DefaultServerSeed;
             server.Options.IdentitySeed = P2PAddressHelper.ParseSeed(effectiveSeed);
 
-            STTech.BytesIO.P2P.PeerClient? client1 = null;
-            STTech.BytesIO.P2P.PeerClient? client2 = null;
-            object bridgeLock = new object();
+            using var relayManager = new P2PRelayManager();
 
             server.PeerConnected += (s, e) =>
             {
                 var c = e.Client;
+                relayManager.RegisterClient(c);
+                var count = relayManager.ActivePeerCount;
+
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点连入] 远端 PeerId: {c.RemotePeerId ?? "未知"} 地址: {c.RemoteAddress}");
                 Console.ResetColor();
 
-                lock (bridgeLock)
+                if (count >= 2)
                 {
-                    if (client1 == null || !client1.IsConnected)
-                    {
-                        client1 = c;
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 1 已就绪 ({c.RemotePeerId})，等待节点 2 连入以建立全双工数据桥接...");
-                    }
-                    else if (client2 == null || !client2.IsConnected)
-                    {
-                        client2 = c;
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 2 已连入 ({c.RemotePeerId})！正在建立全双工数据传输桥接...");
-                        Console.ResetColor();
-
-                        // 建立全双工字节流中继转发
-                        client1.OnDataReceived += (sender, args) =>
-                        {
-                            try { client2?.Send(args.Data.Memory.ToArray()); } catch { }
-                        };
-                        client2.OnDataReceived += (sender, args) =>
-                        {
-                            try { client1?.Send(args.Data.Memory.ToArray()); } catch { }
-                        };
-
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 双向中继数据隧道已打通！Master 与 Slave 现可通过本服务端协同通信。");
-                        Console.ResetColor();
-                    }
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 当前在线节点数: {count}，全双工双向中继数据隧道已建立就绪！");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点已就绪 ({c.RemotePeerId})，等待对端连入建立数据桥接 (当前在线: {count})...");
                 }
             };
 
             server.PeerDisconnected += (s, e) =>
             {
                 var c = e.Client;
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点断开] 远端 PeerId: {c.RemotePeerId ?? "未知"} 原因: {e.DisconnectedInfo.ReasonCode}");
-                Console.ResetColor();
+                relayManager.UnregisterClient(c);
+                var count = relayManager.ActivePeerCount;
 
-                lock (bridgeLock)
-                {
-                    if (c == client1)
-                    {
-                        client1 = null;
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 1 已断开，等待重新接入...");
-                    }
-                    else if (c == client2)
-                    {
-                        client2 = null;
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [中继桥接] 节点 2 已断开，等待重新接入...");
-                    }
-                }
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [节点断开] 远端 PeerId: {c.RemotePeerId ?? "未知"} 原因: {e.DisconnectedInfo.ReasonCode} (剩余在线: {count})");
+                Console.ResetColor();
             };
 
             try
