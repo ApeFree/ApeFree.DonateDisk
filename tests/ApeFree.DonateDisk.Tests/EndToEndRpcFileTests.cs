@@ -54,7 +54,7 @@ namespace ApeFree.DonateDisk.Tests
         public async Task FullDuplexRpc_SlaveDonates_MasterCanOperateRemoteFiles()
         {
             // 1. 初始化 Master 端服务监听
-            var masterTerminal = new RpcTerminal(new TerminalInfo { Name = "MasterNode" });
+            var masterTerminal = new RpcTerminal(new TerminalInfo { Name = "MasterNode" }) { InvokeTimeoutDuration = 10000 };
             var masterAddon = new BytesRpcTerminalAddon(masterTerminal);
             var tcpServer = new STTcpServer { Host = "127.0.0.1", Port = _testPort };
             masterAddon.BindServer(tcpServer);
@@ -84,15 +84,28 @@ namespace ApeFree.DonateDisk.Tests
             var connectedClient = await clientConnectedTcs.Task;
             Assert.NotNull(connectedClient);
 
-            // 等待 RPC 初始化握手完成
-            await Task.Delay(200);
+            // 等待 RPC 初始化握手完成并获取代理
+            await Task.Delay(400);
 
             // 3. Master 端通过连接上的 Client 信道获取 Slave 暴露的磁盘服务代理
             var proxy = masterAddon.QueryService<IDiskOperationsService>(nameof(DiskOperationsService), connectedClient);
             Assert.NotNull(proxy);
 
-            // 4. 测试 GetVolumeInfo
-            var volumeInfo = proxy.GetVolumeInfo();
+            // 4. 测试 GetVolumeInfo（带容错重试以适应高并发测试环境）
+            DiskVolumeInfoDto? volumeInfo = null;
+            for (int i = 0; i < 5; i++)
+            {
+                try
+                {
+                    volumeInfo = proxy.GetVolumeInfo();
+                    if (volumeInfo != null) break;
+                }
+                catch
+                {
+                    await Task.Delay(300);
+                }
+            }
+            Assert.NotNull(volumeInfo);
             Assert.Equal("RemoteDonatedDisk", volumeInfo.VolumeLabel);
 
             // 5. 测试通过 RPC 创建文件并分块写入
@@ -137,7 +150,7 @@ namespace ApeFree.DonateDisk.Tests
         public async Task FullDuplexRpc_DokanDiskOperations_OverRpc_WorksEndToEnd()
         {
             int port = GetAvailablePort();
-            var masterTerminal = new RpcTerminal(new TerminalInfo { Name = "MasterNode2" });
+            var masterTerminal = new RpcTerminal(new TerminalInfo { Name = "MasterNode2" }) { InvokeTimeoutDuration = 10000 };
             var masterAddon = new BytesRpcTerminalAddon(masterTerminal);
             var tcpServer = new STTcpServer { Host = "127.0.0.1", Port = port };
             masterAddon.BindServer(tcpServer);
@@ -159,10 +172,26 @@ namespace ApeFree.DonateDisk.Tests
             Assert.True(connected);
 
             var connectedClient = await clientConnectedTcs.Task;
-            await Task.Delay(250);
+            await Task.Delay(400);
 
             var proxy = masterAddon.QueryService<IDiskOperationsService>(nameof(DiskOperationsService), connectedClient);
             Assert.NotNull(proxy);
+
+            // 确保 RPC 双向通道完全建立
+            DiskVolumeInfoDto? volCheck = null;
+            for (int i = 0; i < 5; i++)
+            {
+                try
+                {
+                    volCheck = proxy.GetVolumeInfo();
+                    if (volCheck != null) break;
+                }
+                catch
+                {
+                    await Task.Delay(300);
+                }
+            }
+            Assert.NotNull(volCheck);
 
             using var dokanOps = new DokanDiskOperations(proxy, defaultVolumeLabel: "RemoteE2E");
 

@@ -93,10 +93,10 @@ namespace ApeFree.DonateDisk.Tests
         [Fact]
         public void P2PAddressHelper_ToMultiaddr_ConvertsCorrectly()
         {
-            Assert.Equal("/ip4/1.2.3.4/tcp/4001", P2PAddressHelper.ToMultiaddr("1.2.3.4:4001"));
-            Assert.Equal("/ip4/1.2.3.4/tcp/4001", P2PAddressHelper.ToMultiaddr("1.2.3.4"));
-            Assert.Equal("/dns4/relay.apefree.org/tcp/4001", P2PAddressHelper.ToMultiaddr("relay.apefree.org:4001"));
-            Assert.Equal("/ip4/1.2.3.4/tcp/4001/p2p/QmTest", P2PAddressHelper.ToMultiaddr("/ip4/1.2.3.4/tcp/4001/p2p/QmTest"));
+            Assert.Equal("/ip4/1.2.3.4/tcp/9831", P2PAddressHelper.ToMultiaddr("1.2.3.4:9831"));
+            Assert.Equal("/ip4/1.2.3.4/tcp/9831", P2PAddressHelper.ToMultiaddr("1.2.3.4"));
+            Assert.Equal("/dns4/relay.apefree.org/tcp/9831", P2PAddressHelper.ToMultiaddr("relay.apefree.org:9831"));
+            Assert.Equal("/ip4/1.2.3.4/tcp/9831/p2p/QmTest", P2PAddressHelper.ToMultiaddr("/ip4/1.2.3.4/tcp/9831/p2p/QmTest"));
         }
 
         [Fact]
@@ -139,7 +139,7 @@ namespace ApeFree.DonateDisk.Tests
             {
                 LocalDirectory = _tempDir,
                 UseP2P = true,
-                P2PServerAddress = "127.0.0.1:4001",
+                P2PServerAddress = "127.0.0.1:9831",
                 TargetPeerId = "12D3KooWMockMasterPeerId"
             };
 
@@ -156,7 +156,7 @@ namespace ApeFree.DonateDisk.Tests
             var options = new DiskMasterOptions
             {
                 UseP2P = true,
-                P2PServerAddress = "127.0.0.1:4001",
+                P2PServerAddress = "127.0.0.1:9831",
                 EnableRelay = false
             };
 
