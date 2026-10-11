@@ -24,7 +24,13 @@ namespace ApeFree.DonateDisk.Slave
         private RpcTerminal? _terminal;
         private BytesRpcTerminalAddon? _addon;
         private DiskOperationsService? _diskService;
+        private CancellationTokenSource? _initialConnectCts;
         private bool _isDisposed;
+
+        /// <summary>
+        /// 自动重连间隔时间（毫秒），默认 3000ms
+        /// </summary>
+        public int ReconnectInterval { get; set; } = 3000;
 
         /// <summary>
         /// 当与 Master 端建立物理连接成功时触发
@@ -175,6 +181,9 @@ namespace ApeFree.DonateDisk.Slave
                 };
             }
 
+            // 启用自动无限重连（基于 BytesIO 官方 ReconnectPlugin）
+            _client.UseAutoReconnect(ReconnectInterval, 0);
+
             // 注册断开连接事件监听，及时释放本地文件句柄
             _client.OnDisconnected += (s, e) =>
             {
@@ -184,7 +193,13 @@ namespace ApeFree.DonateDisk.Slave
 
             _client.OnConnectedSuccessfully += (s, e) =>
             {
+                _initialConnectCts?.Cancel();
                 Connected?.Invoke(this, EventArgs.Empty);
+
+                if (_options.UseP2P && !string.IsNullOrWhiteSpace(_options.P2PServerAddress))
+                {
+                    NotifyMasterReadyWithRetry();
+                }
             };
 
             // 3. 挂载 BytesRpc 插件并绑定信道
@@ -194,28 +209,72 @@ namespace ApeFree.DonateDisk.Slave
             _terminal.RegisterService(_diskService);
 
             // 5. 连接 Master 端
-            var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 25000, CancellationToken = cancellationToken });
+            var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 10000, CancellationToken = cancellationToken });
             LastConnectResult = connectResult;
 
-            if (connectResult.IsSuccess && _options.UseP2P && !string.IsNullOrWhiteSpace(_options.P2PServerAddress))
+            if (connectResult.IsSuccess)
             {
-                // 在 P2P 服务端中继模式下，向 Master 发送上线就绪通知以立即触发挂载
-                _ = Task.Run(async () =>
+                if (_options.UseP2P && !string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                 {
-                    await Task.Delay(300).ConfigureAwait(false);
-                    try
-                    {
-                        var masterService = _addon?.QueryService<IMasterNodeService>(nameof(IMasterNodeService), _client);
-                        masterService?.NotifySlaveReady();
-                    }
-                    catch
-                    {
-                        // 若 Master 尚未启动或未就绪，Master 启动时其自身的 Watcher 会自动探测并完成挂载
-                    }
-                });
+                    NotifyMasterReadyWithRetry();
+                }
+            }
+            else if (!cancellationToken.IsCancellationRequested)
+            {
+                // 初次连接未成功时启动后台持续重试循环，直到成功或外部取消
+                StartInitialReconnectLoop();
             }
 
             return connectResult.IsSuccess;
+        }
+
+        private void NotifyMasterReadyWithRetry()
+        {
+            _ = Task.Run(async () =>
+            {
+                // 稍微等待对端与服务端中继完成握手
+                await Task.Delay(400).ConfigureAwait(false);
+                for (int i = 0; i < 5; i++)
+                {
+                    if (_isDisposed || _client == null || !_client.IsConnected) break;
+                    try
+                    {
+                        var masterService = _addon?.QueryService<IMasterNodeService>(nameof(IMasterNodeService), _client);
+                        if (masterService != null)
+                        {
+                            masterService.NotifySlaveReady();
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // 若 Master 尚未连入，稍后重试
+                    }
+                    await Task.Delay(1500).ConfigureAwait(false);
+                }
+            });
+        }
+
+        private void StartInitialReconnectLoop()
+        {
+            _initialConnectCts?.Cancel();
+            _initialConnectCts = new CancellationTokenSource();
+            var token = _initialConnectCts.Token;
+
+            Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested && !_isDisposed && (_client != null && !_client.IsConnected))
+                {
+                    try
+                    {
+                        await Task.Delay(ReconnectInterval, token).ConfigureAwait(false);
+                        if (token.IsCancellationRequested || _isDisposed || _client == null || _client.IsConnected) break;
+                        await _client.ConnectAsync(new ConnectArgument { Timeout = 10000, CancellationToken = token }).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { }
+                }
+            }, token);
         }
 
         /// <summary>
@@ -223,9 +282,15 @@ namespace ApeFree.DonateDisk.Slave
         /// </summary>
         public void Stop()
         {
-            if (_client != null && _client.IsConnected)
+            _initialConnectCts?.Cancel();
+
+            if (_client != null)
             {
-                _client.Disconnect();
+                _client.DisableAutoReconnect();
+                if (_client.IsConnected)
+                {
+                    _client.Disconnect(new DisconnectArgument(DisconnectionReasonCode.Active));
+                }
             }
 
             _diskService?.DisposeAllSessions();
@@ -241,6 +306,7 @@ namespace ApeFree.DonateDisk.Slave
 
             Stop();
 
+            _initialConnectCts?.Dispose();
             _client?.Dispose();
             _addon?.Dispose();
         }
