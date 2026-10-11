@@ -26,12 +26,18 @@ namespace ApeFree.DonateDisk.Master
         private readonly ConcurrentDictionary<BytesClient, MountedSlaveSession> _sessions = new ConcurrentDictionary<BytesClient, MountedSlaveSession>();
         private readonly SemaphoreSlim _mountLock = new SemaphoreSlim(1, 1);
         private CancellationTokenSource? _p2pWatcherCts;
+        private CancellationTokenSource? _initialConnectCts;
         private TcpServer? _tcpServer;
         private BootstrapServer? _bootstrapServer;
         private PeerClient? _p2pClient;
         private RpcTerminal? _terminal;
         private BytesRpcTerminalAddon? _addon;
         private bool _isDisposed;
+
+        /// <summary>
+        /// 最近一次连接尝试的结果详情
+        /// </summary>
+        public ConnectResult? LastConnectResult { get; private set; }
 
         /// <summary>
         /// 当一个 Slave 成功挂载为本地磁盘盘符时触发
@@ -135,8 +141,12 @@ namespace ApeFree.DonateDisk.Master
                     _p2pClient = peerClient;
                     _addon.BindClient(peerClient);
 
+                    // 启用自动无限重连（基于 BytesIO 官方 ReconnectPlugin）
+                    peerClient.UseAutoReconnect(3000, 0);
+
                     peerClient.OnConnectedSuccessfully += (s, e) =>
                     {
+                        _initialConnectCts?.Cancel();
                         StartP2PSlaveWatcher(peerClient);
                     };
 
@@ -146,15 +156,17 @@ namespace ApeFree.DonateDisk.Master
                         HandleClientDisconnected(peerClient);
                     };
 
-                    var connectResult = await peerClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 25000 }).ConfigureAwait(false);
-                    if (!connectResult.IsSuccess)
-                    {
-                        var errDetail = connectResult.Exception != null ? $" ({connectResult.Exception.Message})" : string.Empty;
-                        throw new InvalidOperationException($"无法连接至 P2P 服务端 ({_options.P2PServerAddress}): {connectResult.ErrorCode}{errDetail}");
-                    }
+                    var connectResult = await peerClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 }).ConfigureAwait(false);
+                    LastConnectResult = connectResult;
 
-                    // 连接成功后启动后台 Slave 探测与发现监听
-                    StartP2PSlaveWatcher(peerClient);
+                    if (connectResult.IsSuccess)
+                    {
+                        StartP2PSlaveWatcher(peerClient);
+                    }
+                    else
+                    {
+                        StartInitialConnectLoop(peerClient);
+                    }
                 }
                 else
                 {
@@ -219,13 +231,46 @@ namespace ApeFree.DonateDisk.Master
         /// <inheritdoc/>
         public void NotifySlaveReady()
         {
-            if (_p2pClient != null && _p2pClient.IsConnected && !_sessions.ContainsKey(_p2pClient))
+            if (_p2pClient != null && _p2pClient.IsConnected)
             {
                 Task.Run(async () =>
                 {
+                    // 若已有旧会话（例如 Slave 掉线又重新接入），先安全释放旧会话以归还盘符与 Dokan 实例
+                    if (_sessions.TryRemove(_p2pClient, out var oldSession))
+                    {
+                        try
+                        {
+                            oldSession.Dispose();
+                            SlaveUnmounted?.Invoke(this, oldSession);
+                        }
+                        catch { }
+                    }
+
                     await TryMountSlaveAsync(_p2pClient).ConfigureAwait(false);
                 });
             }
+        }
+
+        private void StartInitialConnectLoop(PeerClient client)
+        {
+            _initialConnectCts?.Cancel();
+            _initialConnectCts = new CancellationTokenSource();
+            var token = _initialConnectCts.Token;
+
+            Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested && !_isDisposed && (client != null && !client.IsConnected))
+                {
+                    try
+                    {
+                        await Task.Delay(3000, token).ConfigureAwait(false);
+                        if (token.IsCancellationRequested || _isDisposed || client == null || client.IsConnected) break;
+                        await client.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000, CancellationToken = token }).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { }
+                }
+            }, token);
         }
 
         private void StartP2PSlaveWatcher(BytesClient client)
@@ -378,6 +423,7 @@ namespace ApeFree.DonateDisk.Master
         /// </summary>
         public async Task StopAsync()
         {
+            _initialConnectCts?.Cancel();
             _p2pWatcherCts?.Cancel();
 
             foreach (var kv in _sessions)
@@ -402,7 +448,8 @@ namespace ApeFree.DonateDisk.Master
 
             if (_p2pClient != null)
             {
-                _p2pClient.Disconnect();
+                _p2pClient.DisableAutoReconnect();
+                _p2pClient.Disconnect(new DisconnectArgument(DisconnectionReasonCode.Active));
                 _p2pClient.Dispose();
                 _p2pClient = null;
             }
@@ -417,6 +464,7 @@ namespace ApeFree.DonateDisk.Master
             _isDisposed = true;
 
             StopAsync().GetAwaiter().GetResult();
+            _initialConnectCts?.Dispose();
             _tcpServer?.Dispose();
             _bootstrapServer?.Dispose();
             _p2pClient?.Dispose();
