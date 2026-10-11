@@ -19,11 +19,13 @@ namespace ApeFree.DonateDisk.Master
     /// 开放 TCP 服务端监听或 P2P (Libp2p) 引导监听，在 Slave 节点主动连入后获取其磁盘服务代理，
     /// 并通过 Dokany 驱动自动分配可用盘符挂载为 Windows 原生虚拟磁盘。
     /// </summary>
-    public class DiskMasterNode : IDisposable
+    public class DiskMasterNode : IMasterNodeService, IDisposable
     {
         private readonly DiskMasterOptions _options;
         private readonly DriveLetterManager _driveLetterManager = new DriveLetterManager();
         private readonly ConcurrentDictionary<BytesClient, MountedSlaveSession> _sessions = new ConcurrentDictionary<BytesClient, MountedSlaveSession>();
+        private readonly SemaphoreSlim _mountLock = new SemaphoreSlim(1, 1);
+        private CancellationTokenSource? _p2pWatcherCts;
         private TcpServer? _tcpServer;
         private BootstrapServer? _bootstrapServer;
         private PeerClient? _p2pClient;
@@ -82,6 +84,11 @@ namespace ApeFree.DonateDisk.Master
         public IReadOnlyList<string>? P2PListenAddresses => _bootstrapServer?.ListenAddresses;
 
         /// <summary>
+        /// 暴露给 RPC 终端的服务名称标识
+        /// </summary>
+        public string ServiceName => nameof(IMasterNodeService);
+
+        /// <summary>
         /// 初始化 Master 节点
         /// </summary>
         /// <param name="options">运行配置项</param>
@@ -103,7 +110,9 @@ namespace ApeFree.DonateDisk.Master
                 Name = $"MasterNode-{Environment.MachineName}"
             };
             _terminal = new RpcTerminal(terminalInfo);
+            _terminal.InvokeTimeoutDuration = 2500;
             _addon = new BytesRpcTerminalAddon(_terminal);
+            _terminal.RegisterService(this);
 
             if (_options.UseP2P)
             {
@@ -128,11 +137,12 @@ namespace ApeFree.DonateDisk.Master
 
                     peerClient.OnConnectedSuccessfully += (s, e) =>
                     {
-                        HandleClientConnected(peerClient);
+                        StartP2PSlaveWatcher(peerClient);
                     };
 
                     peerClient.OnDisconnected += (s, e) =>
                     {
+                        _p2pWatcherCts?.Cancel();
                         HandleClientDisconnected(peerClient);
                     };
 
@@ -142,6 +152,9 @@ namespace ApeFree.DonateDisk.Master
                         var errDetail = connectResult.Exception != null ? $" ({connectResult.Exception.Message})" : string.Empty;
                         throw new InvalidOperationException($"无法连接至 P2P 服务端 ({_options.P2PServerAddress}): {connectResult.ErrorCode}{errDetail}");
                     }
+
+                    // 连接成功后启动后台 Slave 探测与发现监听
+                    StartP2PSlaveWatcher(peerClient);
                 }
                 else
                 {
@@ -203,6 +216,136 @@ namespace ApeFree.DonateDisk.Master
             }
         }
 
+        /// <inheritdoc/>
+        public void NotifySlaveReady()
+        {
+            if (_p2pClient != null && _p2pClient.IsConnected && !_sessions.ContainsKey(_p2pClient))
+            {
+                Task.Run(async () =>
+                {
+                    await TryMountSlaveAsync(_p2pClient).ConfigureAwait(false);
+                });
+            }
+        }
+
+        private void StartP2PSlaveWatcher(BytesClient client)
+        {
+            _p2pWatcherCts?.Cancel();
+            _p2pWatcherCts = new CancellationTokenSource();
+            var token = _p2pWatcherCts.Token;
+
+            Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested && client.IsConnected && !_isDisposed)
+                {
+                    if (!_sessions.ContainsKey(client))
+                    {
+                        try
+                        {
+                            var mounted = await TryMountSlaveAsync(client, token).ConfigureAwait(false);
+                            if (mounted)
+                            {
+                                break;
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                        catch (Exception)
+                        {
+                            // 探测未命中（远端 Slave 尚未就绪），继续轮询等待
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
+
+                    try
+                    {
+                        await Task.Delay(1500, token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
+            }, token);
+        }
+
+        private async Task<bool> TryMountSlaveAsync(BytesClient client, CancellationToken cancellationToken = default)
+        {
+            if (_isDisposed || !client.IsConnected) return false;
+            if (_sessions.ContainsKey(client)) return true;
+
+            await _mountLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (_sessions.ContainsKey(client)) return true;
+                if (_addon == null || _terminal == null || !client.IsConnected) return false;
+
+                // 1. 获取 Slave 端磁盘服务代理
+                var proxy = _addon.QueryService<IDiskOperationsService>(_options.ServiceName, client);
+                if (proxy == null) return false;
+
+                // 2. 查询远端磁盘信息 (若对端尚未就绪或中继未打通，此处会超时抛出异常)
+                DiskVolumeInfoDto? volInfo = null;
+                try
+                {
+                    volInfo = proxy.GetVolumeInfo();
+                }
+                catch
+                {
+                    // 对端未就绪，本次探测未命中
+                    return false;
+                }
+
+                if (volInfo == null) return false;
+
+                // 3. 分配可用空闲盘符
+                var letter = _driveLetterManager.Allocate(_options.PreferredDriveLetter);
+                if (!letter.HasValue)
+                {
+                    throw new InvalidOperationException("系统没有可用的驱动器盘符（D-Z 均已被占用）。");
+                }
+
+                var mountPoint = DriveLetterHelper.FormatMountPoint(letter.Value, withTrailingSlash: true);
+                var ops = new DokanDiskOperations(proxy, defaultVolumeLabel: volInfo.VolumeLabel);
+                var session = new MountedSlaveSession(client, letter.Value, mountPoint, ops, proxy, volInfo, _driveLetterManager);
+
+                // 4. 构建 DokanInstance 并挂载到 Windows
+                var dokan = new Dokan(null!);
+                var builder = new DokanInstanceBuilder(dokan)
+                    .ConfigureOptions(opt =>
+                    {
+                        var dokanOption = _options.MountAsRemovable ? DokanOptions.RemovableDrive : DokanOptions.FixedDrive;
+                        opt.Options = dokanOption | DokanOptions.MountManager;
+                        opt.MountPoint = mountPoint;
+                    });
+
+                session.RemoteFileChanged += (s, change) =>
+                {
+                    RemoteFileChanged?.Invoke(this, (session, change));
+                };
+
+                session.DokanInstance = builder.Build(ops);
+                _sessions[client] = session;
+
+                SlaveMounted?.Invoke(this, session);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MountFailed?.Invoke(this, (client, ex));
+                throw;
+            }
+            finally
+            {
+                _mountLock.Release();
+            }
+        }
+
         private void HandleClientConnected(BytesClient client)
         {
             // 在后台异步处理 Slave 磁盘挂载流程，避免阻塞网络接受循环
@@ -212,52 +355,7 @@ namespace ApeFree.DonateDisk.Master
                 {
                     // 稍微缓冲以等待对端完成 Terminal 初始化与服务注册
                     await Task.Delay(350);
-
-                    if (_addon == null || _terminal == null || !client.IsConnected)
-                    {
-                        return;
-                    }
-
-                    // 1. 获取 Slave 端磁盘服务代理
-                    var proxy = _addon.QueryService<IDiskOperationsService>(_options.ServiceName, client);
-                    if (proxy == null)
-                    {
-                        throw new InvalidOperationException($"无法从客户端 '{client}' 解析服务 '{_options.ServiceName}'。");
-                    }
-
-                    // 2. 查询远端磁盘信息
-                    var volInfo = proxy.GetVolumeInfo() ?? new DiskVolumeInfoDto();
-
-                    // 3. 分配可用空闲盘符
-                    var letter = _driveLetterManager.Allocate(_options.PreferredDriveLetter);
-                    if (!letter.HasValue)
-                    {
-                        throw new InvalidOperationException("系统没有可用的驱动器盘符（D-Z 均已被占用）。");
-                    }
-
-                    var mountPoint = DriveLetterHelper.FormatMountPoint(letter.Value, withTrailingSlash: true);
-                    var ops = new DokanDiskOperations(proxy, defaultVolumeLabel: volInfo.VolumeLabel);
-                    var session = new MountedSlaveSession(client, letter.Value, mountPoint, ops, proxy, volInfo, _driveLetterManager);
-
-                    // 4. 构建 DokanInstance 并挂载到 Windows
-                    var dokan = new Dokan(null!);
-                    var builder = new DokanInstanceBuilder(dokan)
-                        .ConfigureOptions(opt =>
-                        {
-                            var dokanOption = _options.MountAsRemovable ? DokanOptions.RemovableDrive : DokanOptions.FixedDrive;
-                            opt.Options = dokanOption | DokanOptions.MountManager;
-                            opt.MountPoint = mountPoint;
-                        });
-
-                    session.RemoteFileChanged += (s, change) =>
-                    {
-                        RemoteFileChanged?.Invoke(this, (session, change));
-                    };
-
-                    session.DokanInstance = builder.Build(ops);
-                    _sessions[client] = session;
-
-                    SlaveMounted?.Invoke(this, session);
+                    await TryMountSlaveAsync(client).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -280,6 +378,8 @@ namespace ApeFree.DonateDisk.Master
         /// </summary>
         public async Task StopAsync()
         {
+            _p2pWatcherCts?.Cancel();
+
             foreach (var kv in _sessions)
             {
                 if (_sessions.TryRemove(kv.Key, out var session))

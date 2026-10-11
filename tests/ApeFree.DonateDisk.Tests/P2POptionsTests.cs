@@ -340,5 +340,181 @@ namespace ApeFree.DonateDisk.Tests
 
             await server.CloseAsync();
         }
+
+        [Fact]
+        public async Task TestP2PBridgeMount_MasterStartsFirst()
+        {
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.ListenAddress = "127.0.0.1";
+            server.Options.TcpPort = 4070;
+            server.Options.EnableRelay = false;
+            server.Options.IdentitySeed = P2PAddressHelper.ParseSeed(P2PAddressHelper.DefaultServerSeed);
+
+            STTech.BytesIO.P2P.PeerClient? client1 = null;
+            STTech.BytesIO.P2P.PeerClient? client2 = null;
+            object bridgeLock = new object();
+            server.PeerConnected += (s, e) =>
+            {
+                var c = e.Client;
+                lock (bridgeLock)
+                {
+                    if (client1 == null || !client1.IsConnected)
+                    {
+                        client1 = c;
+                    }
+                    else if (client2 == null || !client2.IsConnected)
+                    {
+                        client2 = c;
+                        client1.OnDataReceived += (s1, a1) => client2?.Send(a1.Data.Memory.ToArray());
+                        client2.OnDataReceived += (s2, a2) => client1?.Send(a2.Data.Memory.ToArray());
+                    }
+                }
+            };
+            await server.StartAsync();
+
+            var tempDir = Path.Combine(Path.GetTempPath(), "p2p_bridge_test1_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                // 1. 先启动 Master (Master 先连入 P2P 服务端并等待 Slave)
+                var masterOptions = new DiskMasterOptions
+                {
+                    UseP2P = true,
+                    P2PServerAddress = "127.0.0.1:4070",
+                    EnableRelay = false,
+                    MountAsRemovable = true
+                };
+                using var master = new DiskMasterNode(masterOptions);
+                var mountSuccessTcs = new TaskCompletionSource<bool>();
+                var mountFailedTcs = new TaskCompletionSource<string>();
+                master.SlaveMounted += (s, e) => mountSuccessTcs.TrySetResult(true);
+                master.MountFailed += (s, e) => mountFailedTcs.TrySetResult(e.Exception.Message);
+
+                await master.StartAsync();
+
+                // 2. 延迟 800ms 后 Slave 才连入中继服务端
+                await Task.Delay(800);
+
+                var slaveOptions = new DiskSlaveOptions
+                {
+                    UseP2P = true,
+                    P2PServerAddress = "127.0.0.1:4070",
+                    LocalDirectory = tempDir,
+                    EnableRelay = false
+                };
+                using var slave = new DiskSlaveNode(slaveOptions);
+                var slaveStarted = await slave.StartAsync();
+                Assert.True(slaveStarted);
+
+                var completed = await Task.WhenAny(mountSuccessTcs.Task, mountFailedTcs.Task, Task.Delay(8000));
+                if (completed == mountFailedTcs.Task)
+                {
+                    var msg = await mountFailedTcs.Task;
+                    Assert.Fail($"Mount failed with error: {msg}");
+                }
+                else if (completed == mountSuccessTcs.Task)
+                {
+                    Assert.True(await mountSuccessTcs.Task);
+                }
+                else
+                {
+                    Assert.Fail("Timed out waiting for mount or mount fail event");
+                }
+            }
+            finally
+            {
+                await server.CloseAsync();
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        [Fact]
+        public async Task TestP2PBridgeMount_SlaveStartsFirst()
+        {
+            using var server = new STTech.BytesIO.P2P.BootstrapServer();
+            server.Options.ListenAddress = "127.0.0.1";
+            server.Options.TcpPort = 4071;
+            server.Options.EnableRelay = false;
+            server.Options.IdentitySeed = P2PAddressHelper.ParseSeed(P2PAddressHelper.DefaultServerSeed);
+
+            STTech.BytesIO.P2P.PeerClient? client1 = null;
+            STTech.BytesIO.P2P.PeerClient? client2 = null;
+            object bridgeLock = new object();
+            server.PeerConnected += (s, e) =>
+            {
+                var c = e.Client;
+                lock (bridgeLock)
+                {
+                    if (client1 == null || !client1.IsConnected)
+                    {
+                        client1 = c;
+                    }
+                    else if (client2 == null || !client2.IsConnected)
+                    {
+                        client2 = c;
+                        client1.OnDataReceived += (s1, a1) => client2?.Send(a1.Data.Memory.ToArray());
+                        client2.OnDataReceived += (s2, a2) => client1?.Send(a2.Data.Memory.ToArray());
+                    }
+                }
+            };
+            await server.StartAsync();
+
+            var tempDir = Path.Combine(Path.GetTempPath(), "p2p_bridge_test2_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                // 1. 先启动 Slave
+                var slaveOptions = new DiskSlaveOptions
+                {
+                    UseP2P = true,
+                    P2PServerAddress = "127.0.0.1:4071",
+                    LocalDirectory = tempDir,
+                    EnableRelay = false
+                };
+                using var slave = new DiskSlaveNode(slaveOptions);
+                var slaveStarted = await slave.StartAsync();
+                Assert.True(slaveStarted);
+
+                // 2. 延迟 500ms 后启动 Master
+                await Task.Delay(500);
+
+                var masterOptions = new DiskMasterOptions
+                {
+                    UseP2P = true,
+                    P2PServerAddress = "127.0.0.1:4071",
+                    EnableRelay = false,
+                    MountAsRemovable = true
+                };
+                using var master = new DiskMasterNode(masterOptions);
+                var mountSuccessTcs = new TaskCompletionSource<bool>();
+                var mountFailedTcs = new TaskCompletionSource<string>();
+                master.SlaveMounted += (s, e) => mountSuccessTcs.TrySetResult(true);
+                master.MountFailed += (s, e) => mountFailedTcs.TrySetResult(e.Exception.Message);
+
+                await master.StartAsync();
+
+                var completed = await Task.WhenAny(mountSuccessTcs.Task, mountFailedTcs.Task, Task.Delay(8000));
+                if (completed == mountFailedTcs.Task)
+                {
+                    var msg = await mountFailedTcs.Task;
+                    Assert.Fail($"Mount failed with error: {msg}");
+                }
+                else if (completed == mountSuccessTcs.Task)
+                {
+                    Assert.True(await mountSuccessTcs.Task);
+                }
+                else
+                {
+                    Assert.Fail("Timed out waiting for mount or mount fail event");
+                }
+            }
+            finally
+            {
+                await server.CloseAsync();
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
     }
 }

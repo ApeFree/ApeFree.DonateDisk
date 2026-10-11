@@ -196,6 +196,25 @@ namespace ApeFree.DonateDisk.Slave
             // 5. 连接 Master 端
             var connectResult = await _client.ConnectAsync(new ConnectArgument { Timeout = 25000, CancellationToken = cancellationToken });
             LastConnectResult = connectResult;
+
+            if (connectResult.IsSuccess && _options.UseP2P && !string.IsNullOrWhiteSpace(_options.P2PServerAddress))
+            {
+                // 在 P2P 服务端中继模式下，向 Master 发送上线就绪通知以立即触发挂载
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(300).ConfigureAwait(false);
+                    try
+                    {
+                        var masterService = _addon?.QueryService<IMasterNodeService>(nameof(IMasterNodeService), _client);
+                        masterService?.NotifySlaveReady();
+                    }
+                    catch
+                    {
+                        // 若 Master 尚未启动或未就绪，Master 启动时其自身的 Watcher 会自动探测并完成挂载
+                    }
+                });
+            }
+
             return connectResult.IsSuccess;
         }
 
