@@ -429,6 +429,7 @@ FodyWeavers.xsd
 
 ## ApeFree Custom Exclusions
 [Ii]nstall/
+Install.7z
 build-release.ps1
 FEASIBILITY_REPORT.md
 
