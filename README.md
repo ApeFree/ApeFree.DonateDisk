@@ -67,69 +67,79 @@ Dokany 挂载 (Z:\)                                      发布本地共享文�
 
 ### 5.1 环境前置要求
 1. **.NET 10.0 Runtime / SDK** (Windows x64)
-2. **Master 端**：需安装 [Dokany 运行时驱动](https://github.com/dokan-dev/dokany/releases)（推荐 2.x 版本）。
-   *(注：Slave 端无需安装 Dokany)*
+2. **Master 端**：需安装 [Dokany 运行时驱动](https://github.com/dokan-dev/dokany/releases)（推荐 2.x 版本），用于 Windows 内核级虚拟磁盘拦截与原生盘符挂载。  
+   *(注：Slave 分享端与 P2P 服务端均无需安装 Dokany)*
 
 ---
 
-### 5.2 方案 A：P2P 穿透模式 (推荐跨公网/复杂 NAT 使用)
+### 5.2 方案 A：P2P 中继穿透模式 (跨公网/复杂 NAT 穿透首选，推荐)
 
-#### 第一步：在公网 VPS 上运行 P2P 服务端 (或使用现成节点)
-`WinCli` 已内置独立 P2P 引导与中继服务：
+> **💡 架构优势说明**：
+> 1. **内置默认种子，零配对负担**：P2P 模式内置了预设认证凭据种子，双方直接连入同一个 `--server` 即可自动完成握手建立中继；
+> 2. **完全解耦启动时序**：服务端、Master 端与 Slave 端三者互不依赖启动顺序。无论是谁先开、谁后开，只要双方连入即可自动打通隧道完成磁盘挂载；
+> 3. **断线无限自动重连**：在弱网、网络波动中断时，后台每 3 秒自动无限重试重连，恢复后 Master 端自动无缝重新挂载并恢复盘符读写。
+
+#### 建议写法（推荐写法，使用内置种子）：
+
+##### 第一步：启动公网 P2P 引导与中继服务端 (Relay Server)
 ```bash
-ApeFree.DonateDisk.WinCli.exe --p2p-server -p 4001
+ApeFree.DonateDisk.WinCli.exe --p2p-server -p 9831
 ```
-启动后终端将输出服务端的 Multiaddr 与 PeerId，例如：
-```text
-[P2P 服务端就绪] 本地 PeerId: 12D3KooWRelayServer...
-[监听 Multiaddr] /ip4/1.2.3.4/tcp/4001
-```
+*(在具有公网 IP 的云服务器或中继节点上运行，监听 9831 端口)*
 
-#### 第二步：Master 端主动连接 P2P 服务端并准备挂载
-在 Master 机器（例如家庭电脑，处于家庭路由器内网）上执行：
+##### 第二步：启动 Master 端 (远程虚拟磁盘挂载端)
 ```bash
-# 连接公网 P2P 服务端，挂载盘符首选 Z:
-ApeFree.DonateDisk.WinCli.exe -m -p2p --server "1.2.3.4:4001" -d Z
-
-# (可选) 可通过 --seed 指定固定密钥种子，保持重启后 PeerId 不变：
-ApeFree.DonateDisk.WinCli.exe -m -p2p --server "1.2.3.4:4001" --seed "my-master-key" -d Z
+ApeFree.DonateDisk.WinCli.exe -m -p2p --server "127.0.0.1:9831" -d Z
 ```
-启动后终端将输出当前 Master 节点的唯一 PeerId：
-```text
-[P2P 就绪] Master 本地 PeerId: 12D3KooWMaster789...
-```
+*(连接 P2P 服务端，指定首选驱动器盘符为 `Z:\`)*
 
-#### 第三步：Slave 端连接 P2P 服务端并路由至 Master 捐赠磁盘
-在 Slave 机器（例如公司电脑，处于企业防火墙内网）上执行：
+##### 第三步：启动 Slave 端 (本地目录主动分享客户端)
 ```bash
-# 连接公网 P2P 服务端，并通过中继指定捐赠给目标 Master：
-ApeFree.DonateDisk.WinCli.exe -s -p2p -d "D:\MyShare" --server "1.2.3.4:4001" --target-peer "12D3KooWMaster789..."
+ApeFree.DonateDisk.WinCli.exe -s -p2p --server "127.0.0.1:9831" -d "C:\Test"
 ```
-连接成功后，Master 端电脑的“此电脑”将立刻自动弹出 `Z:` 盘！
+*(连接 P2P 服务端，将本地 `C:\Test` 目录分享给 Master。连接成功后，Master 机器的“此电脑”将立刻自动弹出 `Z:` 盘！)*
 
 ---
 
-### 5.3 方案 B：标准 TCP 直连模式 (局域网推荐)
+#### 可选写法（自定义网络口令 / 固定 PeerId）：
+由于系统内置了预设种子，普通场景无需额外指定种子。若需要隔离多个独立租户或自定义专属访问密钥，可通过 `--seed` 自定义身份私钥种子：
 
-#### Master 端 (挂载监听)
 ```bash
-# 监听本地 9821 端口，默认分配 Z: 盘
+# 1. 服务端指定自定义凭据种子
+ApeFree.DonateDisk.WinCli.exe --p2p-server -p 9831 --seed "MyCustomSecret123"
+
+# 2. Master 端指定相同凭据种子
+ApeFree.DonateDisk.WinCli.exe -m -p2p --server "127.0.0.1:9831" --seed "MyCustomSecret123" -d Z
+
+# 3. Slave 端指定相同凭据种子
+ApeFree.DonateDisk.WinCli.exe -s -p2p --server "127.0.0.1:9831" --seed "MyCustomSecret123" -d "C:\Test"
+```
+
+---
+
+### 5.3 方案 B：标准 TCP 直连模式 (局域网 / 单向公网直连)
+
+适用于局域网内部互联或 Master 机器拥有可直接访问的 IP 与端口环境。
+
+#### 第一步：Master 端 (监听本地端口等待连接)
+```bash
+# 本地监听 9821 端口，首选挂载为 Z: 盘
 ApeFree.DonateDisk.WinCli.exe -m -p 9821 -d Z
 ```
 
-#### Slave 端 (主动捐赠)
+#### 第二步：Slave 端 (主动拨号连接 Master)
 ```bash
-# 主动连接 Master IP 并分享本地 D:\MyProjects 目录
-ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\MyProjects" -n "ProjectDisk"
+# 主动连接 Master 端 IP:Port，分享本地 C:\Test 目录并指定卷标名称为 Test
+ApeFree.DonateDisk.WinCli.exe -s -h 127.0.0.1 -p 9821 -d "C:\Test" -n "Test"
 
-# (可选) 开启只读保护（禁止远端修改或删除文件）：
-ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\PublicDocs" -r
+# (可选) 开启只读保护模式（禁止远端 Master 修改或删除本地文件）：
+ApeFree.DonateDisk.WinCli.exe -s -h 127.0.0.1 -p 9821 -d "C:\Test" -n "Test" -r
 ```
 
 ---
 
-### 5.4 交互引导模式
-直接双击或不带参数运行 `ApeFree.DonateDisk.WinCli.exe` 即可进入交互式向导：
+### 5.4 交互向导模式 (零参数快速启动)
+直接双击运行或在命令行不传任何参数启动 `ApeFree.DonateDisk.WinCli.exe`，即可进入交互式数字菜单导航：
 ```text
 =================== 请选择运行模式 ===================
   [1] Master 挂载服务端 - 监听网络或连接 P2P 服务端并自动挂载远程磁盘
@@ -141,7 +151,76 @@ ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\PublicDocs" -r
 
 ---
 
-## 6. 构建与打包 (Build & Release)
+## 6. 命令行参数完整手册 (CLI Parameters Reference)
+
+`ApeFree.DonateDisk.WinCli` 支持强大的命令行参数定制，所有模式与选项说明如下：
+
+### 6.1 运行模式分派参数
+| 选项 | 别名 | 描述 |
+| :--- | :--- | :--- |
+| `-m` | `--master` | 以 **Master 挂载服务端** 模式运行（连接网络并挂载 Windows 原生盘符） |
+| `-s` | `--slave` | 以 **Slave 分享客户端** 模式运行（将本地物理文件夹分享至远端 Master） |
+| `--p2p-server` | `-server`, `--relay-server` | 启动 **独立公网 P2P 引导与中继服务端** |
+| `--help` | `-?`, `-h` | 打印全局或当前模式的帮助信息 |
+
+---
+
+### 6.2 Master 挂载服务端参数 (`-m, --master`)
+| 参数 | 全称 | 默认值 | 详细含义说明 |
+| :--- | :--- | :--- | :--- |
+| `-d <盘符>` | `--drive` | `Z` | 首选挂载的驱动器盘符（如 `Z`）。若该盘符已被占用，系统将自动向下顺延至可用盘符（Z -> D） |
+| `-p <端口>` | `--port` | `9821` | 本地 TCP 监听端口（仅在标准 TCP 直连模式下生效） |
+| `-i <IP>` | `--ip` | `0.0.0.0` | 本地 TCP 监听绑定的网卡 IP 地址（仅在标准 TCP 直连模式下生效） |
+| `--fixed` | | *(关闭)* | 挂载为 Windows 本地固定磁盘（FixedDrive）。默认挂载为可移动磁盘（RemovableDrive） |
+| **`-p2p`** | `--p2p` | *(关闭)* | **开启 P2P (Libp2p) 去中心化中继穿透模式** |
+| **`--server <地址>`** | `--p2p-server` | 无 | **P2P 服务端地址**（格式为 `IP:Port` 如 `127.0.0.1:9831` 或 Libp2p Multiaddr） |
+| `--seed <种子>` | | 内置默认种子 | 本地身份私钥种子（字符串或 64 位 Hex 哈希），用于固定 PeerId 或建立专属网络通信凭据 |
+| `--server-peer <PeerId>` | | 无 | （可选）显式指定 P2P 服务端的 PeerId |
+| `--server-seed <种子>` | | 内置默认种子 | （可选）显式指定 P2P 服务端的生成种子 |
+| `--target-peer <PeerId>` | `--slave-peer` | 无 | （可选）仅接受指定 PeerId 的 Slave 端挂载请求 |
+| `--relay` / `--no-relay` | | `启用` | 是否启用 Libp2p Circuit Relay 中继穿透功能 |
+| `--dht` | | *(关闭)* | 是否启用 Kademlia DHT 节点发现 |
+| `--mdns` | | *(关闭)* | 是否启用 mDNS 局域网节点发现 |
+| `--quic` | | *(关闭)* | 是否启用 QUIC 传输协议（默认采用 TCP 流传输） |
+| `--bootstrap <地址>` | | 无 | 额外添加的 P2P 引导节点 Multiaddr 地址 |
+
+---
+
+### 6.3 Slave 分享客户端参数 (`-s, --slave`)
+| 参数 | 全称 | 默认值 | 详细含义说明 |
+| :--- | :--- | :--- | :--- |
+| **`-d <路径>`** | `--dir` | *(必填)* | **待分享给 Master 挂载的本地物理文件夹路径**（支持绝对路径或相对路径） |
+| `-h <主机>` | `--host` | `127.0.0.1` | 目标 Master 端的主机 IP 地址或域名（仅在标准 TCP 直连模式下生效） |
+| `-p <端口>` | `--port` | `9821` | 目标 Master 端的监听端口（仅在标准 TCP 直连模式下生效） |
+| `-n <名称>` | `--name` | 本地目录名 | 虚拟磁盘的卷标显示名称（Volume Label，显示在“此电脑”中的驱动器名） |
+| `-r` | `--readonly` | *(关闭)* | **开启只读保护模式**（远端 Master 仅能读取，禁止创建、修改、重命名或删除文件） |
+| **`-p2p`** | `--p2p` | *(关闭)* | **开启 P2P (Libp2p) 点对点中继传输模式** |
+| **`--server <地址>`** | `--p2p-server` | 无 | **P2P 服务端地址**（格式为 `IP:Port` 如 `127.0.0.1:9831` 或 Multiaddr） |
+| `--seed <种子>` | | 内置默认种子 | 本地身份私钥种子，保持本节点 PeerId 跨重启固定 |
+| `--server-peer <PeerId>` | | 无 | （可选）显式指定 P2P 服务端的 PeerId |
+| `--server-seed <种子>` | | 内置默认种子 | （可选）显式指定 P2P 服务端的生成种子 |
+| `--target-peer <PeerId>` | `--master-peer` | 无 | （可选）通过 P2P 服务端中继定向寻址指定的 Master 端 PeerId |
+| `--master-seed <种子>` | `--target-seed` | 无 | （可选）目标 Master 端的种子（自动计算对应的 Master PeerId） |
+| `-addr <地址>` | `--remote-addr` | 无 | （可选）目标 Master 端的完整 Multiaddr 地址 |
+| `--relay` / `--no-relay` | | `启用` | 是否启用 Libp2p Circuit Relay 中继穿透功能 |
+| `--dht` | | *(关闭)* | 是否启用 Kademlia DHT 发现 |
+| `--mdns` | | *(关闭)* | 是否启用 mDNS 局域网发现 |
+| `--quic` | | *(关闭)* | 是否启用 QUIC 传输协议 |
+| `--bootstrap <地址>` | | 无 | 额外添加的 P2P 引导节点 Multiaddr 地址 |
+
+---
+
+### 6.4 独立 P2P 引导与中继服务端参数 (`--p2p-server`)
+| 参数 | 全称 | 默认值 | 详细含义说明 |
+| :--- | :--- | :--- | :--- |
+| `-p <端口>` | `--port` | `9831` | 服务端监听的网络端口 |
+| `-i <IP>` | `--ip, --host` | `0.0.0.0` | 服务端监听绑定的 IP 地址 |
+| `--seed <种子>` | | 内置默认种子 | 服务端身份私钥种子（留空时使用内置默认种子，双方客户端无需配置即可连入） |
+| `--quic` | | *(关闭)* | 是否启用 QUIC 传输协议支持 |
+
+---
+
+## 7. 构建与打包 (Build & Release)
 
 项目根目录下提供了自动化一键构建与打包脚本：
 ```powershell
@@ -153,6 +232,6 @@ ApeFree.DonateDisk.WinCli.exe -s -h 192.168.1.100 -p 9821 -d "D:\PublicDocs" -r
 
 ---
 
-## 7. 开源许可证 (License)
+## 8. 开源许可证 (License)
 
 本项目采用 [Apache-2.0](LICENSE) 许可证开源。
