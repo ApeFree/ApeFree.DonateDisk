@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ApeFree.DonateDisk/ApeFree.DonateDisk.csproj" />
+    <Project Path="src/ApeFree.DonateDisk.WinSlaveCli/ApeFree.DonateDisk.WinSlaveCli.csproj" />
     <Project Path="src/ApeFree.DonateDisk.WinCli/ApeFree.DonateDisk.WinCli.csproj" />
   </Folder>
   <Folder Name="/tests/">
