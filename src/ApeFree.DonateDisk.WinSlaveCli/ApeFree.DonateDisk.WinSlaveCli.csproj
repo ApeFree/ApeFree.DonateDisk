@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <Title>ApeFree.DonateDisk.WinSlaveCli</Title>
+    <Product>ApeFree.DonateDisk.WinSlaveCli</Product>
+    <Version>0.1.0.0</Version>
+    <Authors>Guijie Lee</Authors>
+    <Company>ApeFree</Company>
+    <Copyright>Copyright © 2022-2026 ApeFree, All Rights Reserved.</Copyright>
+    <Description>ApeFree.DonateDisk 远程虚拟磁盘分享客户端独立工具 (Slave 节点端)</Description>
+
+    <!-- 单文件与修剪打包配置（轻量化独立工具，无磁盘挂载驱动依赖） -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ApeFree.DonateDisk\ApeFree.DonateDisk.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ApeFree.ApeRpc.BytesIO" Version="0.0.3-alpha61009" />
+    <PackageReference Include="STTech.BytesIO.P2P" Version="3.3.0.1-alpha61010" />
+  </ItemGroup>
+
+  <!-- 修剪保护：避免 RPC 反射调度、数据契约 DTO 及 Libp2p 在修剪时被意外剥离 -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="ApeFree.DonateDisk" />
+    <TrimmerRootAssembly Include="ApeFree.DonateDisk.WinSlaveCli" />
+    <TrimmerRootAssembly Include="ApeFree.ApeRpc" />
+    <TrimmerRootAssembly Include="ApeFree.ApeRpc.BytesIO" />
+    <TrimmerRootAssembly Include="STTech.BytesIO" />
+    <TrimmerRootAssembly Include="STTech.CodePlus" />
+    <TrimmerRootAssembly Include="ApeFree.Protocols.Json" />
+    <TrimmerRootAssembly Include="STTech.BytesIO.P2P" />
+    <TrimmerRootAssembly Include="Nethermind.Libp2p" />
+    <TrimmerRootAssembly Include="Nethermind.Libp2p.Core" />
+  </ItemGroup>
+
+</Project>
