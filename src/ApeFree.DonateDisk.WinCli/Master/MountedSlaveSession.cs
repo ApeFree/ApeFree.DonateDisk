@@ -1,12 +1,12 @@
 using ApeFree.DonateDisk.Contracts;
-using DokanNet;
+using Fsp;
 using STTech.BytesIO.Core;
 using System;
 
 namespace ApeFree.DonateDisk.Master
 {
     /// <summary>
-    /// 代表一个已挂载并正在运行的 Slave 虚拟磁盘会话
+    /// 代表一个已挂载并正在运行的 Slave 虚拟磁盘会话 (基于 WinFsp)
     /// </summary>
     public class MountedSlaveSession : IDisposable
     {
@@ -24,19 +24,19 @@ namespace ApeFree.DonateDisk.Master
         public char DriveLetter { get; }
 
         /// <summary>
-        /// 挂载点路径（例如 "Z:\"）
+        /// 挂载点路径（例如 "Z:"）
         /// </summary>
         public string MountPoint { get; }
 
         /// <summary>
-        /// Dokany 运行实例
+        /// WinFsp 文件系统运行宿主实例
         /// </summary>
-        public DokanInstance? DokanInstance { get; set; }
+        public FileSystemHost? FileSystemHost { get; set; }
 
         /// <summary>
         /// 虚拟磁盘操作桥接器
         /// </summary>
-        public DokanDiskOperations Operations { get; }
+        public WinFspDiskOperations Operations { get; }
 
         /// <summary>
         /// 远程磁盘 RPC 代理对象
@@ -64,7 +64,7 @@ namespace ApeFree.DonateDisk.Master
         /// <param name="client">底层客户端通信对象</param>
         /// <param name="driveLetter">分配的盘符</param>
         /// <param name="mountPoint">挂载点字符串</param>
-        /// <param name="operations">Dokan 操作实现</param>
+        /// <param name="operations">WinFsp 操作实现</param>
         /// <param name="remoteDiskService">远程磁盘 RPC 代理</param>
         /// <param name="volumeInfo">卷信息</param>
         /// <param name="driveLetterManager">盘符管理器</param>
@@ -72,7 +72,7 @@ namespace ApeFree.DonateDisk.Master
             BytesClient client,
             char driveLetter,
             string mountPoint,
-            DokanDiskOperations operations,
+            WinFspDiskOperations operations,
             IDiskOperationsService remoteDiskService,
             DiskVolumeInfoDto volumeInfo,
             DriveLetterManager driveLetterManager)
@@ -90,7 +90,7 @@ namespace ApeFree.DonateDisk.Master
         }
 
         /// <summary>
-        /// 释放挂载会话，卸载 Dokan 驱动器并归还盘符
+        /// 释放挂载会话，卸载 WinFsp 驱动器并归还盘符
         /// </summary>
         public void Dispose()
         {
@@ -99,7 +99,8 @@ namespace ApeFree.DonateDisk.Master
 
             try
             {
-                DokanInstance?.Dispose();
+                FileSystemHost?.Unmount();
+                FileSystemHost?.Dispose();
             }
             catch
             {

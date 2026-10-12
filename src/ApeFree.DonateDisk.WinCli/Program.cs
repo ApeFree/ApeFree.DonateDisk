@@ -1,7 +1,8 @@
 using ApeFree.DonateDisk.Common;
 using ApeFree.DonateDisk.Master;
 using ApeFree.DonateDisk.Slave;
-using DokanNet;
+using ApeFree.DonateDisk.WinSlaveCli;
+using Fsp;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -133,8 +134,8 @@ namespace ApeFree.DonateDisk.WinCli
             Console.Title = $"ApeFree.DonateDisk.WinCli v{appVersion} - [Master 模式] 远程磁盘挂载服务端";
             PrintMasterBanner(appVersion);
 
-            // 检查本地 Dokany 驱动与运行时环境
-            CheckDokanyDriver();
+            // 检查本地 WinFsp 驱动与运行时环境
+            CheckWinFspDriver();
 
             var options = ParseMasterArguments(args, isP2P);
             if (options == null)
@@ -497,23 +498,24 @@ namespace ApeFree.DonateDisk.WinCli
             };
         }
 
-        private static void CheckDokanyDriver()
+        private static void CheckWinFspDriver()
         {
             try
             {
-                var dokan = new Dokan(null!);
-                var ver = dokan.DriverVersion;
+                var fs = new FileSystemBase();
+                using var host = new FileSystemHost(fs);
+                host.Preflight("Z:");
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[环境自检] 已检测到 Dokany 内核驱动就绪 (版本: {ver})。");
+                Console.WriteLine("[环境自检] 已检测到 WinFsp 内核驱动与运行时就绪。");
                 Console.ResetColor();
             }
             catch (Exception ex)
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("[环境警告] 检测到当前系统可能未正确安装 Dokany 驱动或版本不匹配：");
+                Console.WriteLine("[环境警告] 检测到当前系统可能未正确安装 WinFsp 驱动运行时：");
                 Console.WriteLine($"           详情: {ex.Message}");
-                Console.WriteLine("           若 Slave 连接后挂载失败，请先安装 Dokany 运行时：");
-                Console.WriteLine("           下载地址: https://github.com/dokan-dev/dokany/releases");
+                Console.WriteLine("           若 Slave 连接后挂载失败，请先安装 WinFsp 运行时：");
+                Console.WriteLine("           下载地址: https://github.com/winfsp/winfsp/releases 或执行 `winget install WinFsp.WinFsp`");
                 Console.WriteLine();
                 Console.ResetColor();
             }
@@ -525,383 +527,7 @@ namespace ApeFree.DonateDisk.WinCli
 
         private static async Task<int> RunSlaveAsync(string[] args, string appVersion, bool isP2P)
         {
-            Console.Title = $"ApeFree.DonateDisk.WinCli v{appVersion} - [Slave 模式] 远程磁盘主动分享客户端";
-            PrintSlaveBanner(appVersion);
-
-            var options = ParseSlaveArguments(args, isP2P);
-            if (options == null)
-            {
-                options = PromptInteractiveSlaveOptions(isP2P);
-                if (options == null)
-                {
-                    return 1;
-                }
-            }
-
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("=================== Slave 分享客户端配置 ===================");
-            Console.ResetColor();
-            Console.WriteLine($"  程序版本:        v{appVersion}");
-            Console.WriteLine($"  运行模式:        Slave (客户端分享节点)");
-            Console.WriteLine($"  通信协议:        {(options.UseP2P ? "P2P (Libp2p 去中心化点对点)" : "标准 TCP 直连")}");
-            if (options.UseP2P)
-            {
-                Console.WriteLine($"  P2P 服务端:      {options.P2PServerAddress ?? "未指定"}");
-                if (!string.IsNullOrEmpty(options.TargetPeerId)) Console.WriteLine($"  目标 Master PeerId: {options.TargetPeerId}");
-                if (!string.IsNullOrEmpty(options.P2PRemoteAddress)) Console.WriteLine($"  目标 Multiaddr:  {options.P2PRemoteAddress}");
-                Console.WriteLine($"  Relay 中继穿透:  {(options.EnableRelay ? "已启用" : "未启用")}");
-                if (!string.IsNullOrEmpty(options.IdentitySeed)) Console.WriteLine("  固定身份种子:    已配置");
-                if (options.EnableDht) Console.WriteLine("  DHT 节点发现:    已启用");
-                if (options.EnableMdns) Console.WriteLine("  mDNS 局域网发现: 已启用");
-                if (options.EnableQuic) Console.WriteLine("  QUIC 传输协议:   已启用");
-            }
-            else
-            {
-                Console.WriteLine($"  Master 主机:     {options.TargetHost}:{options.TargetPort}");
-            }
-            Console.WriteLine($"  分享物理目录:    {options.LocalDirectory}");
-            Console.WriteLine($"  卷标显示名称:    {options.VolumeLabel ?? Path.GetFileName(options.LocalDirectory.TrimEnd('\\', '/'))}");
-            Console.WriteLine($"  只读保护模式:    {(options.IsReadOnly ? "已开启 [只读]" : "已关闭 [可读写]")}");
-            Console.WriteLine("============================================================");
-            Console.WriteLine();
-
-            using var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (s, e) =>
-            {
-                e.Cancel = true;
-                Console.WriteLine("\n[系统] 正在安全停止 Slave 节点并释放本地文件资源...");
-                cts.Cancel();
-            };
-
-            using var slaveNode = new DiskSlaveNode(options);
-
-            slaveNode.Connected += (s, e) =>
-            {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [已连接] 成功连入 Master 端并就绪发布磁盘服务！");
-                Console.ResetColor();
-            };
-
-            slaveNode.Disconnected += (s, e) =>
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [已断开] 与 Master 端的网络连接已中断，本地句柄已自动清理。");
-                Console.ResetColor();
-            };
-
-            slaveNode.FileChanged += (s, e) =>
-            {
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                var detail = string.IsNullOrEmpty(e.OldRelativePath)
-                    ? e.RelativePath
-                    : $"{e.OldRelativePath} -> {e.RelativePath}";
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [本地变动] [{e.ChangeType}] {detail}");
-                Console.ResetColor();
-            };
-
-            var connectTarget = options.UseP2P
-                ? (!string.IsNullOrEmpty(options.TargetPeerId)
-                    ? $"P2P 服务端 {options.P2PServerAddress} -> Master ({options.TargetPeerId})"
-                    : (!string.IsNullOrEmpty(options.P2PRemoteAddress) ? options.P2PRemoteAddress : options.P2PServerAddress ?? "P2P 网络"))
-                : $"{options.TargetHost}:{options.TargetPort}";
-
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 正在连接 Master ({connectTarget})...");
-
-            try
-            {
-                var success = await slaveNode.StartAsync(cts.Token);
-                if (!success)
-                {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    var errDetail = slaveNode.LastConnectResult?.Exception != null
-                        ? $" 原因: {slaveNode.LastConnectResult.Exception.Message}"
-                        : (slaveNode.LastConnectResult != null ? $" 错误码: {slaveNode.LastConnectResult.ErrorCode}" : string.Empty);
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [等待连接] 暂未连上 Master 端 ({connectTarget}){errDetail}，已启动自动重连机制 (每 3 秒无限重试，按 Ctrl+C 可停止)...");
-                    Console.ResetColor();
-                }
-                else
-                {
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 磁盘捐赠已启动！按 Ctrl+C 可停止分享并安全退出。");
-                    Console.ResetColor();
-                }
-
-                while (!cts.Token.IsCancellationRequested)
-                {
-                    await Task.Delay(1000, cts.Token);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // 正常取消
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] 发生未处理异常: {ex.Message}");
-                Console.ResetColor();
-                return 3;
-            }
-            finally
-            {
-                slaveNode.Stop();
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Slave 节点已退出。");
-            }
-
-            return 0;
-        }
-
-        private static DiskSlaveOptions? ParseSlaveArguments(string[] args, bool isP2P)
-        {
-            if (args.Length == 0 && !isP2P) return null;
-
-            string host = "127.0.0.1";
-            int port = 9821;
-            string? dir = null;
-            string? label = null;
-            bool isReadOnly = false;
-
-            // P2P 专用选项
-            bool useP2P = isP2P;
-            string? p2pServerAddr = null;
-            string? serverPeerId = null;
-            string? serverSeed = null;
-            string? targetPeerId = null;
-            string? masterSeed = null;
-            string? p2pRemoteAddr = null;
-            string? identitySeed = null;
-            int p2pPort = 0;
-            bool enableRelay = false;
-            bool enableDht = false;
-            bool enableMdns = false;
-            bool enableQuic = false;
-            var bootstrapPeers = new List<string>();
-
-            for (int i = 0; i < args.Length; i++)
-            {
-                var arg = args[i].ToLowerInvariant();
-                if ((arg == "-h" || arg == "--host") && i + 1 < args.Length)
-                {
-                    host = args[++i];
-                }
-                else if ((arg == "-p" || arg == "--port") && i + 1 < args.Length && int.TryParse(args[i + 1], out var p))
-                {
-                    port = p;
-                    i++;
-                }
-                else if ((arg == "-d" || arg == "--dir") && i + 1 < args.Length)
-                {
-                    dir = args[++i];
-                }
-                else if ((arg == "-n" || arg == "--name") && i + 1 < args.Length)
-                {
-                    label = args[++i];
-                }
-                else if (arg == "-r" || arg == "--readonly")
-                {
-                    isReadOnly = true;
-                }
-                else if (arg == "-p2p" || arg == "--p2p")
-                {
-                    useP2P = true;
-                }
-                else if ((arg == "--server" || arg == "--p2p-server") && i + 1 < args.Length)
-                {
-                    p2pServerAddr = args[++i];
-                    useP2P = true;
-                }
-                else if (arg == "--server-peer" && i + 1 < args.Length)
-                {
-                    serverPeerId = args[++i];
-                    useP2P = true;
-                }
-                else if (arg == "--server-seed" && i + 1 < args.Length)
-                {
-                    serverSeed = args[++i];
-                    useP2P = true;
-                }
-                else if ((arg == "--target-peer" || arg == "--master-peer" || arg == "-peer" || arg == "--peer-id") && i + 1 < args.Length)
-                {
-                    targetPeerId = args[++i];
-                    useP2P = true;
-                }
-                else if ((arg == "--master-seed" || arg == "--target-seed") && i + 1 < args.Length)
-                {
-                    masterSeed = args[++i];
-                    useP2P = true;
-                }
-                else if (arg == "--seed" && i + 1 < args.Length)
-                {
-                    identitySeed = args[++i];
-                    useP2P = true;
-                }
-                else if ((arg == "-addr" || arg == "--remote-addr") && i + 1 < args.Length)
-                {
-                    p2pRemoteAddr = args[++i];
-                    useP2P = true;
-                }
-                else if (arg == "--p2p-port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var pPort))
-                {
-                    p2pPort = pPort;
-                    useP2P = true;
-                    i++;
-                }
-                else if (arg == "--relay")
-                {
-                    enableRelay = true;
-                }
-                else if (arg == "--no-relay")
-                {
-                    enableRelay = false;
-                }
-                else if (arg == "--dht")
-                {
-                    enableDht = true;
-                }
-                else if (arg == "--mdns")
-                {
-                    enableMdns = true;
-                }
-                else if (arg == "--quic")
-                {
-                    enableQuic = true;
-                }
-                else if (arg == "--bootstrap" && i + 1 < args.Length)
-                {
-                    bootstrapPeers.Add(args[++i]);
-                }
-                else if (arg == "--help" || arg == "-?")
-                {
-                    PrintSlaveHelp();
-                    Environment.Exit(0);
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(dir))
-            {
-                return null;
-            }
-
-            var fullDir = Path.GetFullPath(dir);
-            if (!Directory.Exists(fullDir))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[错误] 指定的本地目录不存在: {fullDir}");
-                Console.ResetColor();
-                return null;
-            }
-
-            return new DiskSlaveOptions
-            {
-                TargetHost = host,
-                TargetPort = port,
-                LocalDirectory = fullDir,
-                VolumeLabel = label,
-                IsReadOnly = isReadOnly,
-                UseP2P = useP2P,
-                P2PServerAddress = p2pServerAddr,
-                ServerPeerId = serverPeerId,
-                ServerSeed = serverSeed,
-                TargetPeerId = targetPeerId,
-                MasterSeed = masterSeed,
-                P2PRemoteAddress = p2pRemoteAddr,
-                IdentitySeed = identitySeed,
-                P2PPort = p2pPort,
-                EnableRelay = enableRelay,
-                EnableDht = enableDht,
-                EnableMdns = enableMdns,
-                EnableQuic = enableQuic,
-                BootstrapPeers = bootstrapPeers
-            };
-        }
-
-        private static DiskSlaveOptions? PromptInteractiveSlaveOptions(bool isP2P)
-        {
-            Console.WriteLine("检测到未指定 Slave 详细启动参数，进入交互式引导输入：");
-            Console.WriteLine();
-
-            Console.Write("请输入待分享的本地文件夹物理路径 (例如 D:\\MyShare): ");
-            var dir = Console.ReadLine()?.Trim('\"', ' ');
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("目录路径无效或不存在，操作已取消。");
-                Console.ResetColor();
-                return null;
-            }
-
-            bool useP2P = isP2P;
-            if (!useP2P)
-            {
-                Console.Write("请选择网络传输协议 [1: TCP直连, 2: P2P点对点] (默认 1): ");
-                var protoInput = Console.ReadLine()?.Trim();
-                if (protoInput == "2") useP2P = true;
-            }
-
-            string host = "127.0.0.1";
-            int port = 9821;
-            string? p2pServerAddr = null;
-            string? targetPeerId = null;
-            string? identitySeed = null;
-
-            if (useP2P)
-            {
-                Console.Write("请输入 P2P 服务端地址 (例如 127.0.0.1:9831 或 Multiaddr): ");
-                var sInput = Console.ReadLine()?.Trim();
-                if (!string.IsNullOrWhiteSpace(sInput))
-                {
-                    p2pServerAddr = sInput;
-                }
-
-                Console.Write("请输入 Master 端的 PeerId (由 Master 启动时生成): ");
-                var peerInput = Console.ReadLine()?.Trim();
-                if (!string.IsNullOrWhiteSpace(peerInput))
-                {
-                    targetPeerId = peerInput;
-                }
-
-                Console.Write("请输入固定身份私钥种子 (留空自动生成随机身份): ");
-                var seedInput = Console.ReadLine()?.Trim();
-                if (!string.IsNullOrWhiteSpace(seedInput))
-                {
-                    identitySeed = seedInput;
-                }
-            }
-            else
-            {
-                Console.Write("请输入 Master 端主机 IP 地址 (默认 127.0.0.1): ");
-                var hostInput = Console.ReadLine()?.Trim();
-                host = string.IsNullOrWhiteSpace(hostInput) ? "127.0.0.1" : hostInput;
-
-                Console.Write("请输入 Master 端端口号 (默认 9821): ");
-                var portInput = Console.ReadLine()?.Trim();
-                if (!string.IsNullOrWhiteSpace(portInput) && int.TryParse(portInput, out var p))
-                {
-                    port = p;
-                }
-            }
-
-            Console.Write("请输入自定义虚拟卷标名称 (直接回车使用目录名): ");
-            var labelInput = Console.ReadLine()?.Trim();
-
-            Console.Write("是否开启只读保护模式？(y/N): ");
-            var roInput = Console.ReadLine()?.Trim();
-            bool isReadOnly = string.Equals(roInput, "y", StringComparison.OrdinalIgnoreCase);
-
-            return new DiskSlaveOptions
-            {
-                TargetHost = host,
-                TargetPort = port,
-                LocalDirectory = Path.GetFullPath(dir),
-                VolumeLabel = string.IsNullOrWhiteSpace(labelInput) ? null : labelInput,
-                IsReadOnly = isReadOnly,
-                UseP2P = useP2P,
-                P2PServerAddress = p2pServerAddr,
-                TargetPeerId = targetPeerId,
-                IdentitySeed = identitySeed,
-                EnableRelay = false
-            };
+            return await ApeFree.DonateDisk.WinSlaveCli.Program.RunAsync(args, appVersion, isP2P);
         }
 
         #endregion

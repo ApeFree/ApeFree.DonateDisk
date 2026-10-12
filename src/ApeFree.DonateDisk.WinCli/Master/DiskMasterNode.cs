@@ -2,7 +2,7 @@ using ApeFree.ApeRpc;
 using ApeFree.ApeRpc.BytesIO;
 using ApeFree.DonateDisk.Common;
 using ApeFree.DonateDisk.Contracts;
-using DokanNet;
+using Fsp;
 using STTech.BytesIO.Core;
 using STTech.BytesIO.P2P;
 using STTech.BytesIO.Tcp;
@@ -17,7 +17,7 @@ namespace ApeFree.DonateDisk.Master
     /// <summary>
     /// Master 节点控制宿主。
     /// 开放 TCP 服务端监听或 P2P (Libp2p) 引导监听，在 Slave 节点主动连入后获取其磁盘服务代理，
-    /// 并通过 Dokany 驱动自动分配可用盘符挂载为 Windows 原生虚拟磁盘。
+    /// 并通过 WinFsp 驱动自动分配可用盘符挂载为 Windows 原生虚拟磁盘。
     /// </summary>
     public class DiskMasterNode : IMasterNodeService, IDisposable
     {
@@ -235,7 +235,7 @@ namespace ApeFree.DonateDisk.Master
             {
                 Task.Run(async () =>
                 {
-                    // 若已有旧会话（例如 Slave 掉线又重新接入），先安全释放旧会话以归还盘符与 Dokan 实例
+                    // 若已有旧会话（例如 Slave 掉线又重新接入），先安全释放旧会话以归还盘符与 WinFsp 实例
                     if (_sessions.TryRemove(_p2pClient, out var oldSession))
                     {
                         try
@@ -355,26 +355,32 @@ namespace ApeFree.DonateDisk.Master
                     throw new InvalidOperationException("系统没有可用的驱动器盘符（D-Z 均已被占用）。");
                 }
 
-                var mountPoint = DriveLetterHelper.FormatMountPoint(letter.Value, withTrailingSlash: true);
-                var ops = new DokanDiskOperations(proxy, defaultVolumeLabel: volInfo.VolumeLabel);
+                var mountPoint = DriveLetterHelper.FormatMountPoint(letter.Value, withTrailingSlash: false);
+                var ops = new WinFspDiskOperations(proxy, defaultVolumeLabel: volInfo.VolumeLabel);
                 var session = new MountedSlaveSession(client, letter.Value, mountPoint, ops, proxy, volInfo, _driveLetterManager);
 
-                // 4. 构建 DokanInstance 并挂载到 Windows
-                var dokan = new Dokan(null!);
-                var builder = new DokanInstanceBuilder(dokan)
-                    .ConfigureOptions(opt =>
-                    {
-                        var dokanOption = _options.MountAsRemovable ? DokanOptions.RemovableDrive : DokanOptions.FixedDrive;
-                        opt.Options = dokanOption | DokanOptions.MountManager;
-                        opt.MountPoint = mountPoint;
-                    });
+                // 4. 构建 FileSystemHost 并挂载到 Windows
+                var host = new FileSystemHost(ops);
+                host.FileSystemName = volInfo.FileSystemName ?? "NTFS";
+                host.CaseSensitiveSearch = false;
+                host.CasePreservedNames = true;
+                host.UnicodeOnDisk = true;
 
                 session.RemoteFileChanged += (s, change) =>
                 {
                     RemoteFileChanged?.Invoke(this, (session, change));
                 };
 
-                session.DokanInstance = builder.Build(ops);
+                int mountStatus = host.Mount(mountPoint);
+                if (mountStatus != 0)
+                {
+                    host.Dispose();
+                    ops.Dispose();
+                    _driveLetterManager.Release(letter.Value);
+                    throw new InvalidOperationException($"WinFsp 挂载磁盘到 {mountPoint} 失败，错误状态码: 0x{mountStatus:X8}");
+                }
+
+                session.FileSystemHost = host;
                 _sessions[client] = session;
 
                 SlaveMounted?.Invoke(this, session);
