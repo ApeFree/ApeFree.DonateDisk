@@ -4,11 +4,12 @@ using ApeFree.DonateDisk.Common;
 using ApeFree.DonateDisk.Contracts;
 using ApeFree.DonateDisk.Master;
 using ApeFree.DonateDisk.Slave;
-using DokanNet;
+using Fsp;
 using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using Xunit;
@@ -147,7 +148,7 @@ namespace ApeFree.DonateDisk.Tests
         }
 
         [Fact]
-        public async Task FullDuplexRpc_DokanDiskOperations_OverRpc_WorksEndToEnd()
+        public async Task FullDuplexRpc_WinFspDiskOperations_OverRpc_WorksEndToEnd()
         {
             int port = GetAvailablePort();
             var masterTerminal = new RpcTerminal(new TerminalInfo { Name = "MasterNode2" }) { InvokeTimeoutDuration = 10000 };
@@ -193,48 +194,64 @@ namespace ApeFree.DonateDisk.Tests
             }
             Assert.NotNull(volCheck);
 
-            using var dokanOps = new DokanDiskOperations(proxy, defaultVolumeLabel: "RemoteE2E");
+            using var winfspOps = new WinFspDiskOperations(proxy, defaultVolumeLabel: "RemoteE2E");
 
-            // 1. Create file through DokanDiskOperations
-            var info = new MockDokanFileInfo();
-            var createRes = dokanOps.CreateFile(@"\e2e_dokan.txt", DokanNet.FileAccess.WriteData | DokanNet.FileAccess.ReadData, FileShare.ReadWrite, FileMode.CreateNew, 0, 0, info);
-            Assert.Equal(DokanResult.Success, createRes);
-            Assert.NotNull(info.Context);
+            // 1. Create file through WinFspDiskOperations
+            var createRes = winfspOps.Create(@"\e2e_fsp.txt", 0, 0, (uint)FileAttributes.Normal, null!, 0, out object fileNode, out object fileDesc, out Fsp.Interop.FileInfo fileInfo, out string normName);
+            Assert.Equal(FileSystemBase.STATUS_SUCCESS, createRes);
+            Assert.NotNull(fileDesc);
 
             // 2. Write file
-            var data = Encoding.UTF8.GetBytes("Data written through Dokan over RPC!");
-            var writeRes = dokanOps.WriteFile(@"\e2e_dokan.txt", data, out int written, 0, info);
-            Assert.Equal(DokanResult.Success, writeRes);
-            Assert.Equal(data.Length, written);
+            var data = Encoding.UTF8.GetBytes("Data written through WinFsp over RPC!");
+            var ptr = Marshal.AllocHGlobal(data.Length);
+            try
+            {
+                Marshal.Copy(data, 0, ptr, data.Length);
+                var writeRes = winfspOps.Write(fileNode, fileDesc, ptr, 0, (uint)data.Length, false, false, out uint written, out fileInfo);
+                Assert.Equal(FileSystemBase.STATUS_SUCCESS, writeRes);
+                Assert.Equal((uint)data.Length, written);
 
-            // 3. Read file
-            var readBuf = new byte[data.Length];
-            var readRes = dokanOps.ReadFile(@"\e2e_dokan.txt", readBuf, out int readCount, 0, info);
-            Assert.Equal(DokanResult.Success, readRes);
-            Assert.Equal(data.Length, readCount);
-            Assert.Equal(data, readBuf);
+                // 3. Read file
+                var readPtr = Marshal.AllocHGlobal(data.Length);
+                try
+                {
+                    var readRes = winfspOps.Read(fileNode, fileDesc, readPtr, 0, (uint)data.Length, out uint readCount);
+                    Assert.Equal(FileSystemBase.STATUS_SUCCESS, readRes);
+                    Assert.Equal((uint)data.Length, readCount);
 
-            dokanOps.CloseFile(@"\e2e_dokan.txt", info);
+                    var readBuf = new byte[data.Length];
+                    Marshal.Copy(readPtr, readBuf, 0, data.Length);
+                    Assert.Equal(data, readBuf);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(readPtr);
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(ptr);
+            }
+
+            winfspOps.Close(fileNode, fileDesc);
 
             // 4. Verify physical file on Slave
-            var physicalPath = Path.Combine(_tempSharedDir, "e2e_dokan.txt");
+            var physicalPath = Path.Combine(_tempSharedDir, "e2e_fsp.txt");
             Assert.True(File.Exists(physicalPath));
 
-            // 5. Move/Rename file through Dokan
-            var moveRes = dokanOps.MoveFile(@"\e2e_dokan.txt", @"\e2e_dokan_renamed.txt", replace: false, info);
-            Assert.Equal(DokanResult.Success, moveRes);
+            // 5. Move/Rename file through WinFsp
+            var moveRes = winfspOps.Rename(fileNode, fileDesc, @"\e2e_fsp.txt", @"\e2e_fsp_renamed.txt", false);
+            Assert.Equal(FileSystemBase.STATUS_SUCCESS, moveRes);
             Assert.False(File.Exists(physicalPath));
-            Assert.True(File.Exists(Path.Combine(_tempSharedDir, "e2e_dokan_renamed.txt")));
+            Assert.True(File.Exists(Path.Combine(_tempSharedDir, "e2e_fsp_renamed.txt")));
 
-            // 6. Delete file through Dokan Cleanup
-            var openForDel = dokanOps.CreateFile(@"\e2e_dokan_renamed.txt", DokanNet.FileAccess.Delete, FileShare.ReadWrite | FileShare.Delete, FileMode.Open, 0, 0, info);
-            Assert.Equal(DokanResult.Success, openForDel);
-            dokanOps.DeleteFile(@"\e2e_dokan_renamed.txt", info);
-            info.DeletePending = true;
-            dokanOps.Cleanup(@"\e2e_dokan_renamed.txt", info);
-            dokanOps.CloseFile(@"\e2e_dokan_renamed.txt", info);
+            // 6. Delete file through WinFsp Cleanup
+            var openForDel = winfspOps.Open(@"\e2e_fsp_renamed.txt", 0, 0x00010000 /* DELETE */, out fileNode, out fileDesc, out fileInfo, out normName);
+            Assert.Equal(FileSystemBase.STATUS_SUCCESS, openForDel);
+            winfspOps.Cleanup(fileNode, fileDesc, @"\e2e_fsp_renamed.txt", FileSystemBase.CleanupDelete);
+            winfspOps.Close(fileNode, fileDesc);
 
-            Assert.False(File.Exists(Path.Combine(_tempSharedDir, "e2e_dokan_renamed.txt")));
+            Assert.False(File.Exists(Path.Combine(_tempSharedDir, "e2e_fsp_renamed.txt")));
 
             slaveNode.Stop();
             await tcpServer.CloseAsync();
