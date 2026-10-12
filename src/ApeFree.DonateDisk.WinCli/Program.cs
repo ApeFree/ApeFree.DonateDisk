@@ -514,6 +514,14 @@ namespace ApeFree.DonateDisk.WinCli
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine("[环境警告] 检测到当前系统可能未正确安装 WinFsp 驱动运行时：");
                 Console.WriteLine($"           详情: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    Console.WriteLine($"           内部异常: {ex.InnerException}");
+                }
+                else
+                {
+                    Console.WriteLine($"           堆栈: {ex}");
+                }
                 Console.WriteLine("           若 Slave 连接后挂载失败，请先安装 WinFsp 运行时：");
                 Console.WriteLine("           下载地址: https://github.com/winfsp/winfsp/releases 或执行 `winget install WinFsp.WinFsp`");
                 Console.WriteLine();
