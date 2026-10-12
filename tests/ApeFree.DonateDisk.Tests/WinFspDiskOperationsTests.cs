@@ -47,6 +47,60 @@ namespace ApeFree.DonateDisk.Tests
         }
 
         [Fact]
+        public void RealDriveMountAndIO_WithWinFspHost_Succeeds()
+        {
+            // 找到空闲的驱动器盘符
+            char freeLetter = '\0';
+            for (char c = 'Z'; c >= 'D'; c--)
+            {
+                if (!Directory.Exists($"{c}:\\"))
+                {
+                    freeLetter = c;
+                    break;
+                }
+            }
+
+            Assert.True(freeLetter != '\0', "找不到可用的空闲驱动器盘符进行挂载测试");
+            string mountPoint = $"{freeLetter}:";
+
+            using var host = new FileSystemHost(_ops);
+            var preflight = host.Preflight(mountPoint);
+            Assert.Equal(0, preflight);
+
+            var mountStatus = host.Mount(mountPoint);
+            Assert.Equal(0, mountStatus);
+
+            try
+            {
+                string driveRoot = $"{mountPoint}\\";
+                Assert.True(Directory.Exists(driveRoot), $"挂载后驱动器根目录应可访问: {driveRoot}");
+
+                // 通过 Windows 标准 I/O 在虚拟驱动器根目录下创建并写入文件
+                string testFileOnDrive = Path.Combine(driveRoot, "real_drive_test.txt");
+                File.WriteAllText(testFileOnDrive, "Hello from real WinFsp Windows drive mounting test!");
+
+                // 读取验证
+                string readContent = File.ReadAllText(testFileOnDrive);
+                Assert.Equal("Hello from real WinFsp Windows drive mounting test!", readContent);
+
+                // 验证 Slave 端物理文件夹中对应文件已生成
+                string physicalFile = Path.Combine(_tempDir, "real_drive_test.txt");
+                Assert.True(File.Exists(physicalFile), "Slave 物理目录中应存在由虚拟驱动器写入的文件");
+
+                // 列举目录
+                var driveFiles = Directory.GetFiles(driveRoot);
+                Assert.Contains(driveFiles, f => f.EndsWith("real_drive_test.txt", StringComparison.OrdinalIgnoreCase));
+            }
+            finally
+            {
+                host.Unmount();
+            }
+
+            // 卸载后验证
+            Assert.False(Directory.Exists($"{mountPoint}\\"), $"卸载后驱动器盘符 {mountPoint}\\ 应不可访问");
+        }
+
+        [Fact]
         public void GetVolumeInfo_ReturnsSuccessAndCorrectSizes()
         {
             var status = _ops.GetVolumeInfo(out var volInfo);
