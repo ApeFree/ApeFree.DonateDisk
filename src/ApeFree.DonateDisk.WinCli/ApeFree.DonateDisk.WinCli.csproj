@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ApeFree.DonateDisk\ApeFree.DonateDisk.csproj" />
+    <ProjectReference Include="..\..\..\ApeFree.PyramidMenu\src\ApeFree.PyramidMenu\ApeFree.PyramidMenu.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,6 +40,7 @@
   <ItemGroup>
     <TrimmerRootAssembly Include="ApeFree.DonateDisk" />
     <TrimmerRootAssembly Include="ApeFree.DonateDisk.WinCli" />
+    <TrimmerRootAssembly Include="ApeFree.PyramidMenu" />
     <TrimmerRootAssembly Include="ApeFree.ApeRpc" />
     <TrimmerRootAssembly Include="ApeFree.ApeRpc.BytesIO" />
     <TrimmerRootAssembly Include="STTech.BytesIO" />

@@ -1,3 +1,4 @@
+using ApeFree.DonateDisk.Common;
 using System.Collections.Generic;
 
 namespace ApeFree.DonateDisk.Master
@@ -7,6 +8,23 @@ namespace ApeFree.DonateDisk.Master
     /// </summary>
     public class DiskMasterOptions
     {
+        private bool _useP2P;
+
+        /// <summary>
+        /// 网络传输模式（默认 Listen 监听，可设为 Connect 主动连接 Slave，或 P2P 中继）
+        /// </summary>
+        public NetworkTransportMode TransportMode { get; set; } = NetworkTransportMode.Listen;
+
+        /// <summary>
+        /// 当处于 Connect 模式时，目标 Slave 端的主机 IP 或域名（默认 127.0.0.1）
+        /// </summary>
+        public string TargetHost { get; set; } = "127.0.0.1";
+
+        /// <summary>
+        /// 当处于 Connect 模式时，目标 Slave 端的监听端口（默认 9821）
+        /// </summary>
+        public int TargetPort { get; set; } = 9821;
+
         /// <summary>
         /// 本地监听绑定的主机 IP 或域名（默认 0.0.0.0 监听所有网卡，仅用于标准 TCP 模式）
         /// </summary>
@@ -35,7 +53,18 @@ namespace ApeFree.DonateDisk.Master
         /// <summary>
         /// 是否启用 P2P (Libp2p) 去中心化模式
         /// </summary>
-        public bool UseP2P { get; set; }
+        public bool UseP2P
+        {
+            get => _useP2P || TransportMode == NetworkTransportMode.P2P;
+            set
+            {
+                _useP2P = value;
+                if (value)
+                {
+                    TransportMode = NetworkTransportMode.P2P;
+                }
+            }
+        }
 
         /// <summary>
         /// P2P 引导与中继服务端地址（例如 127.0.0.1:9831 或 /ip4/127.0.0.1/tcp/9831/p2p/QmServer...）

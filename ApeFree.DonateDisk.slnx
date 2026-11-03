@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/ApeFree.DonateDisk/ApeFree.DonateDisk.csproj" />
     <Project Path="src/ApeFree.DonateDisk.WinCli/ApeFree.DonateDisk.WinCli.csproj" />
+    <Project Path="../ApeFree.PyramidMenu/src/ApeFree.PyramidMenu/ApeFree.PyramidMenu.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ApeFree.DonateDisk.Tests/ApeFree.DonateDisk.Tests.csproj" />

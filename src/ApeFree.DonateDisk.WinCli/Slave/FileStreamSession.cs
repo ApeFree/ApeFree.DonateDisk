@@ -27,6 +27,11 @@ namespace ApeFree.DonateDisk.Slave
         public FileStream Stream { get; }
 
         /// <summary>
+        /// 句柄拥有者标识符（用于多 Master 接入时的客户端隔离与安全释放）
+        /// </summary>
+        public string? OwnerId { get; }
+
+        /// <summary>
         /// 最后一次活跃时间
         /// </summary>
         public DateTime LastAccessTime { get; private set; }
@@ -37,11 +42,13 @@ namespace ApeFree.DonateDisk.Slave
         /// <param name="handleId">句柄唯一标识</param>
         /// <param name="relativePath">相对路径</param>
         /// <param name="stream">物理文件流</param>
-        public FileStreamSession(long handleId, string relativePath, FileStream stream)
+        /// <param name="ownerId">句柄拥有者标识符</param>
+        public FileStreamSession(long handleId, string relativePath, FileStream stream, string? ownerId = null)
         {
             HandleId = handleId;
             RelativePath = relativePath;
             Stream = stream ?? throw new ArgumentNullException(nameof(stream));
+            OwnerId = ownerId;
             LastAccessTime = DateTime.UtcNow;
         }
 
