@@ -1,4 +1,4 @@
-using ApeFree.DonateDisk.Common;
+﻿using ApeFree.DonateDisk.Common;
 using ApeFree.DonateDisk.Contracts;
 using System;
 using System.Collections.Concurrent;
@@ -355,7 +355,9 @@ namespace ApeFree.DonateDisk.Slave
                 var fs = new FileStream(fullPath, fileMode, fileAccess, fileShare, 4096, fileOptions);
                 long handleId = System.Threading.Interlocked.Increment(ref _handleCounter);
 
-                var session = new FileStreamSession(handleId, path, fs);
+                var callingCtx = ApeFree.ApeRpc.RpcTerminal.GetRemoteCallingTerminalId();
+                string? ownerId = callingCtx?.RemoteTerminalId;
+                var session = new FileStreamSession(handleId, path, fs, ownerId);
                 _sessions[handleId] = session;
 
                 // 若以 Create 或 OpenOrCreate 打开已存在的文件，在 Windows 内核返回 AlreadyExists 状态码代表打开了已有文件
@@ -624,6 +626,21 @@ namespace ApeFree.DonateDisk.Slave
                 if (creationTime.HasValue) Directory.SetCreationTimeUtc(fullPath, creationTime.Value);
                 if (lastAccessTime.HasValue) Directory.SetLastAccessTimeUtc(fullPath, lastAccessTime.Value);
                 if (lastWriteTime.HasValue) Directory.SetLastWriteTimeUtc(fullPath, lastWriteTime.Value);
+            }
+        }
+
+        /// <summary>
+        /// 释放所有未关闭的流会话（通常在断线或停止服务时调用）
+        /// </summary>
+        public void DisposeSessionsByOwner(string ownerId)
+        {
+            if (string.IsNullOrEmpty(ownerId)) return;
+            foreach (var kv in _sessions)
+            {
+                if (kv.Value.OwnerId == ownerId && _sessions.TryRemove(kv.Key, out var session))
+                {
+                    session.Dispose();
+                }
             }
         }
 

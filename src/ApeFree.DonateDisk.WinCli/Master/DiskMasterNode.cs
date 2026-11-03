@@ -10,13 +10,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ApeFree.DonateDisk.Master
 {
     /// <summary>
     /// Master 节点控制宿主。
-    /// 开放 TCP 服务端监听或 P2P (Libp2p) 引导监听，在 Slave 节点主动连入后获取其磁盘服务代理，
+    /// 开放 TCP 服务端监听、主动连接 Slave 客户端或基于 P2P (Libp2p) 引导，在与 Slave 节点连通后获取其磁盘服务代理，
     /// 并通过 Dokany 驱动自动分配可用盘符挂载为 Windows 原生虚拟磁盘。
     /// </summary>
     public class DiskMasterNode : IMasterNodeService, IDisposable
@@ -28,6 +29,7 @@ namespace ApeFree.DonateDisk.Master
         private CancellationTokenSource? _p2pWatcherCts;
         private CancellationTokenSource? _initialConnectCts;
         private TcpServer? _tcpServer;
+        private TcpClient? _tcpClient;
         private BootstrapServer? _bootstrapServer;
         private PeerClient? _p2pClient;
         private RpcTerminal? _terminal;
@@ -77,7 +79,10 @@ namespace ApeFree.DonateDisk.Master
         /// <summary>
         /// 服务端当前是否正在监听或处于已连接状态
         /// </summary>
-        public bool IsListening => (_tcpServer != null && _tcpServer.IsListening) || (_bootstrapServer != null && _bootstrapServer.IsListening) || (_p2pClient != null && _p2pClient.IsConnected);
+        public bool IsListening => (_tcpServer != null && _tcpServer.IsListening) ||
+                                   (_bootstrapServer != null && _bootstrapServer.IsListening) ||
+                                   (_p2pClient != null && _p2pClient.IsConnected) ||
+                                   (_tcpClient != null && _tcpClient.IsConnected);
 
         /// <summary>
         /// 若在 P2P 模式下，获取当前本地节点的 PeerId
@@ -104,7 +109,7 @@ namespace ApeFree.DonateDisk.Master
         }
 
         /// <summary>
-        /// 启动 Master 节点并开始监听端口
+        /// 启动 Master 节点并就绪工作（按配置选择服务端监听或主动连接 Slave）
         /// </summary>
         public async Task StartAsync()
         {
@@ -120,7 +125,7 @@ namespace ApeFree.DonateDisk.Master
             _addon = new BytesRpcTerminalAddon(_terminal);
             _terminal.RegisterService(this);
 
-            if (_options.UseP2P)
+            if (_options.TransportMode == NetworkTransportMode.P2P)
             {
                 if (!string.IsNullOrWhiteSpace(_options.P2PServerAddress))
                 {
@@ -210,9 +215,46 @@ namespace ApeFree.DonateDisk.Master
                     await _bootstrapServer.StartAsync().ConfigureAwait(false);
                 }
             }
+            else if (_options.TransportMode == NetworkTransportMode.Connect)
+            {
+                // 2c. 标准 TCP 客户端主动连向目标 Slave 端
+                _tcpClient = new TcpClient
+                {
+                    Host = _options.TargetHost,
+                    Port = _options.TargetPort
+                };
+
+                _addon.BindClient(_tcpClient);
+
+                // 启用自动无限重连（基于 BytesIO 官方 ReconnectPlugin）
+                _tcpClient.UseAutoReconnect(3000, 0);
+
+                _tcpClient.OnConnectedSuccessfully += (s, e) =>
+                {
+                    _initialConnectCts?.Cancel();
+                    HandleClientConnected(_tcpClient);
+                };
+
+                _tcpClient.OnDisconnected += (s, e) =>
+                {
+                    HandleClientDisconnected(_tcpClient);
+                };
+
+                var connectResult = await _tcpClient.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000 }).ConfigureAwait(false);
+                LastConnectResult = connectResult;
+
+                if (connectResult.IsSuccess)
+                {
+                    HandleClientConnected(_tcpClient);
+                }
+                else
+                {
+                    StartInitialTcpConnectLoop(_tcpClient);
+                }
+            }
             else
             {
-                // 2. 初始化标准 TCP 监听服务端
+                // 2d. 初始化标准 TCP 监听服务端 (默认)
                 _tcpServer = new TcpServer
                 {
                     Host = _options.ListenHost,
@@ -249,6 +291,28 @@ namespace ApeFree.DonateDisk.Master
                     await TryMountSlaveAsync(_p2pClient).ConfigureAwait(false);
                 });
             }
+        }
+
+        private void StartInitialTcpConnectLoop(TcpClient client)
+        {
+            _initialConnectCts?.Cancel();
+            _initialConnectCts = new CancellationTokenSource();
+            var token = _initialConnectCts.Token;
+
+            Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested && !_isDisposed && (client != null && !client.IsConnected))
+                {
+                    try
+                    {
+                        await Task.Delay(3000, token).ConfigureAwait(false);
+                        if (token.IsCancellationRequested || _isDisposed || client == null || client.IsConnected) break;
+                        await client.ConnectAsync(new STTech.BytesIO.Core.ConnectArgument { Timeout = 10000, CancellationToken = token }).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { }
+                }
+            }, token);
         }
 
         private void StartInitialConnectLoop(PeerClient client)
@@ -419,7 +483,7 @@ namespace ApeFree.DonateDisk.Master
         }
 
         /// <summary>
-        /// 停止 Master 节点，卸载所有挂载的盘符并关闭监听端口
+        /// 停止 Master 节点，卸载所有挂载的盘符并关闭连接/监听端口
         /// </summary>
         public async Task StopAsync()
         {
@@ -440,6 +504,17 @@ namespace ApeFree.DonateDisk.Master
                 _tcpServer = null;
             }
 
+            if (_tcpClient != null)
+            {
+                _tcpClient.DisableAutoReconnect();
+                if (_tcpClient.IsConnected)
+                {
+                    _tcpClient.Disconnect(new DisconnectArgument(DisconnectionReasonCode.Active));
+                }
+                _tcpClient.Dispose();
+                _tcpClient = null;
+            }
+
             if (_bootstrapServer != null)
             {
                 await _bootstrapServer.CloseAsync();
@@ -456,7 +531,7 @@ namespace ApeFree.DonateDisk.Master
         }
 
         /// <summary>
-        /// 释放 Master 节点资源，停止监听并卸载所有挂载盘符
+        /// 释放 Master 节点资源，停止监听/连接并卸载所有挂载盘符
         /// </summary>
         public void Dispose()
         {
@@ -466,6 +541,7 @@ namespace ApeFree.DonateDisk.Master
             StopAsync().GetAwaiter().GetResult();
             _initialConnectCts?.Dispose();
             _tcpServer?.Dispose();
+            _tcpClient?.Dispose();
             _bootstrapServer?.Dispose();
             _p2pClient?.Dispose();
             _addon?.Dispose();
